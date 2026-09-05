@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Baton",
+  "version": "0.1.0",
+  "identifier": "dev.baton.app",
+  "build": {
+    "frontendDist": "../web/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ../web run dev",
+    "beforeBuildCommand": "npm --prefix ../web run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Baton",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:7700"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}

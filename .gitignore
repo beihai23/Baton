@@ -1,0 +1,17 @@
+# Rust
+core/target/
+src-tauri/target/
+
+# Node
+web/node_modules/
+web/dist/
+
+# 本地运行数据（自动生成）
+core/data/
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# 系统
+.DS_Store
