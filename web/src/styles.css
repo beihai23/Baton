@@ -106,3 +106,80 @@ button:hover { filter: brightness(1.1); }
 
 .comment-box { margin-top: 10px; }
 .comment-box input { width: 100%; }
+
+/* ---- v0.1 新增：审批中心 / Tabs / 进度条 / 拖拽 / 表单 / 现场拓扑 ---- */
+
+.approval-btn { background: var(--panel-2); border: 1px solid var(--border); }
+.pill {
+  background: #e5534b; border-radius: 10px; padding: 1px 7px;
+  margin-left: 6px; font-size: 11px;
+}
+
+.approvals {
+  margin: 12px 20px 0; padding: 12px 16px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+}
+.approvals h3 { margin: 0 0 10px; font-size: 14px; }
+.approval-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px;
+}
+.a-title { font-weight: 600; }
+.approval-row button { padding: 5px 10px; }
+button.danger { background: #5a2d2d; border: 1px solid #8a4444; }
+
+.column.drag-over { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(79,140,255,.25); }
+.lock-hint { font-size: 12px; }
+
+.progress-line { margin: 8px 0; font-size: 12px; color: var(--muted); }
+.progress-line .bar {
+  height: 6px; background: var(--panel-2); border-radius: 3px;
+  overflow: hidden; margin-bottom: 4px;
+}
+.progress-line .bar > div { height: 100%; background: #8fd6a0; }
+
+.tabs { display: flex; gap: 4px; margin: 14px 0 12px; border-bottom: 1px solid var(--border); }
+.tab {
+  background: none; color: var(--muted); border: none;
+  border-bottom: 2px solid transparent; border-radius: 0; padding: 6px 12px;
+}
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+.kv-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 0; font-size: 13px; flex-wrap: wrap;
+}
+.kv-row a { color: var(--accent); text-decoration: none; }
+.tag {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 1px 8px; font-size: 11px; color: var(--muted);
+}
+.mono { font-family: ui-monospace, "SF Mono", monospace; font-size: 12px; }
+.muted { color: var(--muted); font-size: 12px; }
+.error-text { color: #ff9a9a; font-size: 12px; }
+
+.form-row { display: flex; gap: 6px; margin: 12px 0; flex-wrap: wrap; }
+.form-row input, .form-row select {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 6px 10px; font-size: 12px; outline: none;
+}
+.form-row input { flex: 1; min-width: 100px; }
+
+.repo, .node {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px;
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+}
+.repo { flex-direction: column; align-items: flex-start; gap: 4px; }
+.main-node { border-left: 3px solid var(--accent); }
+.git-status { display: flex; gap: 10px; font-size: 12px; }
+.git-status span:not(.muted) { color: #e5a04b; }
+
+.handoff-state { font-size: 13px; margin-bottom: 10px; }
+.handoff-pkg {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; margin: 10px 0; font-size: 13px;
+}
+.handoff-pkg h4 { margin: 0 0 6px; }
+
+h4 { font-size: 13px; color: var(--muted); margin: 14px 0 6px; }

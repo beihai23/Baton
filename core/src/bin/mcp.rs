@@ -49,7 +49,44 @@ fn tool_defs() -> Value {
          "inputSchema": {"type": "object", "required": ["card_id","percent","summary"], "properties": {
              "card_id": {"type": "string"},
              "percent": {"type": "integer", "minimum": 0, "maximum": 100},
-             "summary": {"type": "string"}}}}
+             "summary": {"type": "string"}}}},
+        {"name": "link_add", "description": "给卡片添加需求来源/文档链接（Jira/MeeGo/url/本地文件）",
+         "inputSchema": {"type": "object", "required": ["card_id","category","title"], "properties": {
+             "card_id": {"type": "string"},
+             "category": {"type": "string", "enum": ["source","doc"]},
+             "system": {"type": "string", "enum": ["jira","meego","github_issue","url","file"]},
+             "url": {"type": "string"}, "key": {"type": "string"}, "title": {"type": "string"},
+             "relation": {"type": "string", "enum": ["origin","related"]},
+             "kind": {"type": "string", "enum": ["url","local_file","artifact"]},
+             "path": {"type": "string"}}}},
+        {"name": "git_attach", "description": "声明卡片关联的仓库/分支（declared 层）",
+         "inputSchema": {"type": "object", "required": ["card_id","repo_path","branch"], "properties": {
+             "card_id": {"type": "string"}, "repo_path": {"type": "string"},
+             "branch": {"type": "string"}, "base_branch": {"type": "string"}}}},
+        {"name": "git_refresh", "description": "探测关联仓库的真实 git 状态（staged/unstaged/ahead/behind/last_commit），写入 observed 快照",
+         "inputSchema": {"type": "object", "required": ["card_id"], "properties": {
+             "card_id": {"type": "string"}}}},
+        {"name": "worksite_add_node", "description": "登记工作现场节点（main 主目录或 worktree），可绑定子卡形成拓扑",
+         "inputSchema": {"type": "object", "required": ["card_id","kind","path","branch"], "properties": {
+             "card_id": {"type": "string"},
+             "kind": {"type": "string", "enum": ["main","worktree"]},
+             "path": {"type": "string"}, "branch": {"type": "string"},
+             "purpose": {"type": "string"}, "owner": {"type": "string"},
+             "bound_card_id": {"type": "string"}}}},
+        {"name": "handoff_prepare", "description": "开始移交：整理移交包（上下文笔记 + 工作现场快照 + 未结话题）",
+         "inputSchema": {"type": "object", "required": ["card_id"], "properties": {
+             "card_id": {"type": "string"}, "reason": {"type": "string"},
+             "to": {"type": "string", "description": "指定接手方成员 id，缺省公开可认领"},
+             "context_note": {"type": "string"}, "env_notes": {"type": "string"}}}},
+        {"name": "handoff_ready", "description": "移交包就绪：释放租约，卡片标记待接手",
+         "inputSchema": {"type": "object", "required": ["card_id"], "properties": {
+             "card_id": {"type": "string"}}}},
+        {"name": "handoff_accept", "description": "接受移交：claim 卡片并继承工作现场",
+         "inputSchema": {"type": "object", "required": ["card_id"], "properties": {
+             "card_id": {"type": "string"}}}},
+        {"name": "handoff_cancel", "description": "取消移交",
+         "inputSchema": {"type": "object", "required": ["card_id"], "properties": {
+             "card_id": {"type": "string"}}}}
     ])
 }
 
@@ -75,6 +112,16 @@ fn call_tool(db: &Db, agent: &str, name: &str, args: &Value) -> Result<Value, Ap
             args.get("percent").and_then(Value::as_i64).unwrap_or(0),
             s("summary"),
         ),
+        "link_add" => db.add_link(s("card_id"), agent, args),
+        "git_attach" => db.git_attach(
+            s("card_id"), agent, s("repo_path"), s("branch"),
+            args.get("base_branch").and_then(Value::as_str),
+        ),
+        "git_refresh" => db.git_refresh(s("card_id"), agent),
+        "worksite_add_node" => db.worksite_add_node(s("card_id"), agent, args),
+        "handoff_prepare" | "handoff_ready" | "handoff_accept" | "handoff_cancel" => {
+            db.handoff_action(s("card_id"), agent, name.trim_start_matches("handoff_"), args)
+        }
         _ => Err(ApiErr::bad_request("unknown tool")),
     }
 }
