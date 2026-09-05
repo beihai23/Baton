@@ -1,4 +1,7 @@
 // Baton Web — API 客户端（对齐 core HTTP API / contract/types.ts）
+// dev 环境走 vite 代理（/api → 7700）；Tauri 生产环境直连内嵌 core
+
+export const API_BASE = import.meta.env.DEV ? "" : "http://127.0.0.1:7700";
 
 export interface Claim {
   holder_id: string;
@@ -132,7 +135,7 @@ export interface Approval {
 }
 
 async function req<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const r = await fetch(`/api/v1${path}`, {
+  const r = await fetch(`${API_BASE}/api/v1${path}`, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,

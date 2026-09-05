@@ -87,12 +87,22 @@ BATON_AGENT_ID=a-code      # 本进程扮演的 Agent 成员 id（默认 a-code�
 - **MCP / CLI / HTTP core 三方并发共享同一库**（SQLite WAL），状态互见
 - 已存在的库二次启动正常（schema 幂等，`CREATE ... IF NOT EXISTS`）
 
-## Tauri 壳说明
+## Tauri 桌面应用
 
-`src-tauri/` 配置已就绪（窗口、CSP 仅放行 127.0.0.1:7700、构建命令已接线）。
-首次 `cargo build` 需编译 tauri 全量依赖（较久）；骨架阶段用
-`cargo run`（core）+ `npm run dev`（web）开发调试即可。
-后续在 `src-tauri/src/main.rs` 的 `setup` 里 spawn 内嵌 core server。
+Tauri 壳已构建并验证通过：`src-tauri/src/main.rs` 在 `setup` 里 spawn 线程内嵌
+`baton_core::server::serve("127.0.0.1:7700", db)`，数据库落在系统应用数据目录
+（macOS: `~/Library/Application Support/dev.baton.app/baton.db`）。窗口加载
+`web/dist` 生产包，前端经 `API_BASE`（生产环境为 `http://127.0.0.1:7700`）直连内嵌 core；
+CSP `connect-src` 仅放行该地址。
+
+```bash
+# 首次需先构建前端
+cd web && npm run build && cd ..
+cd src-tauri && cargo run        # 打开桌面窗口，内嵌 core 自动启动
+```
+
+已验证：窗口进程启动后 core 正常监听，`/api/v1/board`、建卡、`/api/v1/events`
+长轮询均正常响应。
 
 ## 下一步（按 PRD 路线图）
 
@@ -101,4 +111,5 @@ BATON_AGENT_ID=a-code      # 本进程扮演的 Agent 成员 id（默认 a-code�
 3. ~~列策略执行引擎（F-304）~~ ✅ require_progress_summary + require_approval 已生效
 4. ~~worktree / handoff / links 的 API 与 GUI Tab~~ ✅ 五 Tab 抽屉已上线
 5. ~~CLI（F-203）~~ ✅ `baton` 命令
-6. 待做：多项目切换 UI、依赖编排触发、通知中心、Agent 注册管理 GUI、Tauri 壳首次构建
+6. ~~Tauri 桌面壳（内嵌 core，单机双击即用）~~ ✅ 已构建并实测
+7. 待做：多项目切换 UI、依赖编排触发、通知中心、Agent 注册管理 GUI、安装包打包（`cargo tauri build`）

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  api, Approval, BoardState, CardDetail, CardSummary,
+  api, API_BASE, Approval, BoardState, CardDetail, CardSummary,
   ListWithCards, MEMBER_NAMES,
 } from "./api";
 
@@ -36,7 +36,7 @@ export default function App() {
     (async function poll(since: number) {
       while (alive) {
         try {
-          const r = await fetch(`/api/v1/events?since=${since}`);
+          const r = await fetch(`${API_BASE}/api/v1/events?since=${since}`);
           const d = await r.json();
           since = d.last_seq ?? since;
           if (d.events?.length) {

@@ -1,7 +1,9 @@
 //! Baton Core — 数据层（SQLite）
 //! 对齐 contract/schema.sql 与 PRD §4.6。
 //! 范围：卡片 CRUD、claim 租约、评论（多话题）、乐观锁移列、列策略引擎、审批流、
-//! links / git / worksite / handoff、事件日志 + SSE 事件总线。
+//! links / git / worksite / handoff、事件日志 + 事件总线（长轮询推送）。
+
+pub mod server;
 
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde_json::{json, Map, Value};
