@@ -120,8 +120,9 @@ cd src-tauri && cargo build       # 首次编译 Tauri 全量依赖较久
 
 ### CI / Release
 
-`.github/workflows/release.yml`：发布 GitHub Release 时触发，macOS 双 target
-（aarch64 + x86_64）构建 Tauri 应用并把 .dmg/.app.tar.gz 附加到该 Release。
+`.github/workflows/release.yml`：推 `v*` tag 触发，自动创建**草稿 Release**（tag 同名），
+macOS 双 target（aarch64 + x86_64）构建 Tauri 应用并把 .dmg/.app.tar.gz 附加到草稿；
+检查无误后在 GitHub 手动发布。
 web/dist 在 workflow 里显式构建（`npm ci && npm run build`，绕过 beforeBuildCommand
 的工作目录坑），tauri-action 以 `--config '{"build":{"beforeBuildCommand":"true"}}'` 跳过。
 **未签名/未公证**：用户首次打开需右键 → 打开。

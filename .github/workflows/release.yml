@@ -1,15 +1,16 @@
-# Release 流水线：发布 GitHub Release 时构建 Tauri 桌面应用并上传安装包
+# Release 流水线：推 v* tag 自动创建草稿 Release 并打包 Tauri 桌面应用
 #
-# 触发：在 GitHub 上发布 Release（tag 建议 v* 语义化版本）。
-# 产物：macOS 的 .dmg / .app.tar.gz（aarch64 + x86_64 两个目标），自动附加到该 Release。
+# 触发：git tag v0.2.0 && git push --tags
+# 产物：自动创建草稿 Release（tag 同名），macOS 的 .dmg / .app.tar.gz
+# （aarch64 + x86_64 两个 target）构建完成后自动附加。检查无误后在 GitHub 上手动发布。
 #
 # 注意：未做 Apple 签名/公证——用户首次打开需"右键 → 打开"绕过 Gatekeeper。
 
 name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: write
@@ -52,12 +53,14 @@ jobs:
             core
             src-tauri
 
-      - name: 构建并上传 Tauri 安装包
+      - name: 构建 Tauri 应用并附加到草稿 Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: src-tauri
-          releaseId: ${{ github.event.release.id }}
+          tagName: ${{ github.ref_name }}
+          releaseName: "Baton ${{ github.ref_name }}"
+          releaseDraft: true
           # web/dist 已在上面构建；跳过 beforeBuildCommand
           args: --target ${{ matrix.target }} --config '{"build":{"beforeBuildCommand":"true"}}'
