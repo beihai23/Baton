@@ -121,11 +121,52 @@ CREATE TABLE IF NOT EXISTS claims (
     card_id       TEXT PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
     holder_id     TEXT NOT NULL REFERENCES members(id),
     run_id        TEXT,                            -- 关联执行记录
+    session_id    TEXT,                            -- 认领时的 Agent Session（旧库由迁移补列）
     lease_until   TEXT NOT NULL,                   -- 到期自动释放
     acquired_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_claims_holder ON claims(holder_id);
 CREATE INDEX IF NOT EXISTS idx_claims_lease  ON claims(lease_until);
+
+-- ----------------------------------------------------------------------------
+-- 协同参与（多 Agent 共同完成同一任务）：租约（claims）只有一条，是"主驾"，
+-- 负责状态机推进；参与者表记录"副驾"——协同者可以评论/汇报进度/上传产物/移列
+-- （乐观锁 rev 仍兜底并发冲突），但不承担主责。
+-- 到场/离场是显式动作（join/leave），让"谁在协同"在板上可见。
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS card_participants (
+    card_id       TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    member_id     TEXT NOT NULL REFERENCES members(id),
+    session_id    TEXT,                            -- 参与时的 Agent Session
+    joined_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    left_at       TEXT,                            -- NULL = 协同中
+    PRIMARY KEY (card_id, member_id)
+);
+CREATE INDEX IF NOT EXISTS idx_card_participants_member ON card_participants(member_id);
+
+-- ----------------------------------------------------------------------------
+-- Agent Session（会话实例）：任务分配的真实对象。
+-- members 表里的 Agent 是"编制"（持久身份 + Token + 能力）；Session 是某次具体出勤
+-- （某工具的一次对话 / 某进程），进板时声明 scope 与工作现场，离开或超时判死。
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sessions (
+    id            TEXT PRIMARY KEY,
+    agent_id      TEXT NOT NULL REFERENCES members(id),
+    project_id    TEXT REFERENCES projects(id),    -- 声明的 scope（可空 = 全部）
+    board_id      TEXT REFERENCES boards(id),
+    cwd           TEXT,                            -- 进程工作目录
+    repo_path     TEXT,                            -- 自动探测的 git 仓库根
+    branch        TEXT,                            -- 自动探测的分支
+    status        TEXT NOT NULL DEFAULT 'active'
+                  CHECK (status IN ('active','ended')),   -- stale 由心跳超时计算得出，不落库
+    parent_session_id TEXT REFERENCES sessions(id),       -- resume 接力链
+    meta_json     TEXT NOT NULL DEFAULT '{}',      -- clientInfo/pid/工具厂商等自报信息
+    started_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    last_heartbeat TEXT,
+    ended_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_sessions_hb ON sessions(last_heartbeat);
 
 -- 执行记录（PRD §2.1 Run）
 CREATE TABLE IF NOT EXISTS runs (

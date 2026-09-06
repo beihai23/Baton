@@ -39,9 +39,38 @@ export interface Member extends MemberRef {
 
 export interface AgentProfile {
   capabilities: string[];          // 能力标签：coding / writing / research ...
-  token_hash: string;              // 本地 Token（仅存哈希）
+  token_hash: string;              // 本地 Token（仅存 SHA-256 哈希；F-212）
+  last_heartbeat?: ISODateTime;    // 最近心跳（F-213，120s 内视为在线）
   rate_limit_per_min?: number;     // F-308，默认 60
   concurrency_quota?: number;      // 同时持有卡片上限
+}
+
+// ---------------------------------------------------------------------------
+// Agent Session（会话实例）：任务分配的真实对象
+// ---------------------------------------------------------------------------
+//
+// Agent Profile（members 表）是"编制"：持久身份、Token、能力标签。
+// Session 是"出勤"：某工具的一次对话/某进程，进板时声明 scope 与工作现场。
+// 注意与 MCP 协议层的连接无关 —— 2026-07-28 无状态核心要求跨请求状态由
+// 客户端显式携带标识符，session_id 即业务层的显式标识。
+
+export type SessionStatus = 'active' | 'ended';
+// 'stale' 是计算状态（active 但 180s 无心跳），不落库
+
+export interface AgentSession {
+  id: Id;
+  agent_id: Id;                  // → Agent Profile
+  project_id?: Id;               // 声明的 scope
+  board_id?: Id;
+  cwd?: string;                  // 进程工作目录
+  repo_path?: string;            // 自动探测的 git 仓库根
+  branch?: string;               // 自动探测的分支
+  status: SessionStatus;
+  parent_session_id?: Id;        // resume 接力链
+  meta: Record<string, unknown>; // clientInfo / pid / 工具厂商等自报信息
+  started_at: ISODateTime;
+  last_heartbeat?: ISODateTime;  // 心跳 = 续命 + 自动续期本 session 持有的租约
+  ended_at?: ISODateTime;
 }
 
 // ---------------------------------------------------------------------------
@@ -71,6 +100,7 @@ export interface ColumnPolicy {
   require_approval?: 'human' | 'coordinator' | null; // 进入需审批
   require_progress_summary?: boolean;          // 移入本列时强制更新 progress.summary
   block_if_open_threads?: boolean;             // 存在未结话题时禁止进入
+  is_done?: boolean;                           // 完成列：进入时校验 blocked_by 依赖全部完成（F-106）
   on_enter?: ColumnAction[];                   // 自动触发动作
 }
 
@@ -101,6 +131,15 @@ export interface Claim {
   lease_until: ISODateTime;        // 到期自动释放（F-301）
   run_id?: Id;
   acquired_at: ISODateTime;
+}
+
+// 协同参与（多 Agent 同卡协作）：租约是"主驾"，参与者是"副驾"
+export interface CardParticipant {
+  card_id: Id;
+  member_id: Id;
+  session_id?: Id;
+  joined_at: ISODateTime;
+  left_at?: ISODateTime;           // NULL = 协同中
 }
 
 export type DepRelation = 'blocks' | 'blocked_by' | 'relates_to';
@@ -375,6 +414,38 @@ export interface Event {
         | 'work_node' | 'handoff' | 'approval' | 'claim' | 'run'
         | 'board' | 'list' | 'project' | 'member';
   entity_id: Id;
-  action: string;                  // create/update/move/claim/release/...
+  action: string;                  // create/update/move/claim/release/takeover/import/...
   payload: Record<string, unknown>; // 变更前后差异
+}
+
+// ---------------------------------------------------------------------------
+// 幂等写（F-307）与导出（F-503）
+// ---------------------------------------------------------------------------
+
+/** 幂等键记录（idempotency_keys 表）：HTTP 写请求携带 Idempotency-Key 头时生效 */
+export interface IdempotencyKey {
+  key: string;
+  actor_id: Id;
+  request_hash: string;            // sha256(method + path + body)
+  response_json?: string;          // 首个成功响应，重放时原样返回
+  created_at: ISODateTime;
+}
+
+/** 项目导出包（baton export）：project.json 的顶层结构 */
+export interface ProjectExport {
+  format: 'baton-export/v1';
+  exported_at: ISODateTime;
+  members: Record<string, unknown>[];
+  projects: Record<string, unknown>[];
+  boards: Record<string, unknown>[];
+  lists: Record<string, unknown>[];
+  cards: Record<string, unknown>[];
+  threads: Record<string, unknown>[];
+  comments: Record<string, unknown>[];
+  links: Record<string, unknown>[];
+  artifacts: Record<string, unknown>[];
+  work_nodes: Record<string, unknown>[];
+  handoffs: Record<string, unknown>[];
+  handoff_timeline: Record<string, unknown>[];
+  approvals: Record<string, unknown>[];
 }
