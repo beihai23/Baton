@@ -14,7 +14,8 @@
 最小闭环：**人建卡 → Agent claim 租约 → 评论/进度 → 乐观锁移列**。
 
 - 产品定义与路线图见 `docs/prd.md`（PRD v0.1，特性编号如 F-201/F-304/F-401 出自该文档）。
-- `README.md` 记录了已实现的功能清单与已通过的冒烟测试场景，是判断"已实现什么"的权威参考。
+- `README.md` 面向第一次打开仓库的访客（是什么/为什么/怎么跑）；功能与验证清单的
+  权威参考是本文件（§2 结构、§4 机制、§6 测试策略）。
 
 ## 2. 仓库结构
 
@@ -271,16 +272,33 @@ claim/release/takeover/assign/comments/progress/move/artifacts/deps、审批 `ap
 ## 6. 测试策略
 
 **目前没有自动化测试**（无 `cargo test` 用例、无前端测试、无 CI 配置）。
-验证方式是手工冒烟 + 浏览器端到端 + MCP 会话，已通过的场景记录在 `README.md` 的
-"已验证"一节（重复 claim 409、rev 冲突 409、非持有者移列 409、列策略 400、审批流转、
-handoff 状态机与非法迁移 409、长轮询推送、git 真实探测、MCP/CLI/HTTP 三方并发共享
-同一库等）。
+验证方式是手工冒烟 + 浏览器端到端（无头浏览器驱动 WebUI）+ MCP 会话。
+
+已验证的场景清单（从旧 README"已验证"一节迁移，作为回归参照）：
+
+- 租约：重复 claim 409；rev 冲突 409（附 current_rev）；非持有者/非协同者移列 409；
+  租约过期后可重新认领（原子 upsert）；release 权限（持有者/人类可，他人 403）；
+  takeover 人类强制释放留系统评论；5 进程并发抢同一卡 = 1 成功 4 × 409
+- 列策略：无进度摘要进 In Progress 400（Agent 受限/人类豁免）；Review 列自动转审批单、
+  批准后强制移列；peer 验收（申请者自审 403、同伴 Agent 可裁决）；Done 列依赖门禁
+  409（附 blocking）+ 子任务未完成 409（附 unfinished_children）+ 依赖解除通知下游
+- 讨论区：reply_to 跨卡/不存在 400；thread_id 跨卡 400；回复归父评论所在话题；
+  IME 组合中 Enter 不误发
+- 协同参与：join 后副驾可移列/评论/汇报；leave 后移列 409；重复 leave 409
+- handoff 全状态机（prepare→ready 释放租约→accept 自动 claim；非法迁移 409）
+- 长轮询推送、断连恢复补 refresh、首屏不被长轮询阻塞
+- Token 鉴权：已签发 Agent 无/错 Token 401、吊销 403、人类专属操作 403；
+  自注册默认放开（BATON_AGENT_SELF_REGISTER=0 时 403）
+- 幂等写：同 key 重放返回首个响应（Idempotency-Replayed）、异体 409；速率限制 429
+- 产物上传（content/path）+ sha256 + 内联预览；git_refresh 真实探测；导出/导入幂等；
+  备份 keep 清理；MCP 双时代握手；三方（MCP/CLI/HTTP）并发共享同一库
+- GUI 全流程：建卡即开抽屉、拖拽预告、审批中心历史、扁平侧栏项目管理、接入指引复制
 
 改动后请至少：
 
 1. `cd core && cargo build` 编译通过；
 2. `cd web && npm run build`（含 `tsc --noEmit`）类型检查通过；
-3. 涉及核心逻辑时，按 README 中相应场景手工冒烟验证（可用 CLI `baton doctor`、
+3. 涉及核心逻辑时，按上面相应场景手工冒烟验证（可用 CLI `baton doctor`、
    `baton card ...` 快速复现）。
 
 ## 7. 安全与边界
