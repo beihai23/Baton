@@ -2292,3 +2292,29 @@ impl From<rusqlite::Error> for ApiErr {
 pub fn empty_ext() -> Map<String, Value> {
     Map::new()
 }
+
+/// 统一默认库路径（所有入口共用：baton-core / CLI / MCP / Tauri 壳）：
+/// `BATON_DB` 环境变量优先；否则 `~/.baton/baton.db`。
+/// 一次性迁移：旧默认 `data/baton.db`（cwd 相对）存在而新路径不存在时复制过去。
+/// 注意：若旧 server 正在写库，直接文件复制可能不一致——迁移只发生在首次启动，
+/// 本地工具场景可接受（复制失败退化为新库重新播种）。
+pub fn default_db_path() -> String {
+    if let Ok(p) = std::env::var("BATON_DB") {
+        return p;
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let new = format!("{}/.baton/baton.db", home);
+    let legacy = std::path::Path::new("data/baton.db");
+    if !std::path::Path::new(&new).exists() && legacy.exists() {
+        // WAL 三件套一起复制（只拷主库文件会丢未 checkpoint 的数据）；
+        // 若旧 server 正在写仍可能不一致——迁移只发生在首次启动，本地场景可接受
+        std::fs::create_dir_all(format!("{}/.baton", home)).ok();
+        for suffix in ["", "-wal", "-shm"] {
+            let src = format!("data/baton.db{}", suffix);
+            if std::path::Path::new(&src).exists() {
+                let _ = std::fs::copy(&src, format!("{}{}", new, suffix));
+            }
+        }
+    }
+    new
+}

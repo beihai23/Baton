@@ -39,7 +39,7 @@ use serde_json::{json, Value};
 use std::process::exit;
 
 fn main() {
-    let db_path = std::env::var("BATON_DB").unwrap_or_else(|_| "data/baton.db".into());
+    let db_path = baton_core::default_db_path();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
         eprintln!("{}", include_str!("cli.rs").lines().take(20).collect::<Vec<_>>().join("\n"));

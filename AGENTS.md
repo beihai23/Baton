@@ -79,7 +79,7 @@ SQLite 库文件（WAL 模式）。三者语义一致（乐观锁/租约/列策�
 ```bash
 # 终端 1：启动 core（自动建库并播种演示数据）
 cd core && cargo run
-# 数据库默认在 core/data/baton.db；监听 127.0.0.1:7700
+# 数据库默认在 ~/.baton/baton.db（BATON_DB 可覆盖）；监听 127.0.0.1:7700
 
 # 终端 2：启动前端（Vite dev，/api 代理到 7700，见 web/vite.config.ts）
 cd web && npm install && npm run dev
@@ -105,9 +105,13 @@ cd web && npm run build && cd ..   # 先构建前端
 cd src-tauri && cargo run          # 窗口内嵌 core，setup 中 spawn 线程自动启动
 ```
 
-Tauri 生产环境数据库在系统应用数据目录（macOS: `~/Library/Application Support/dev.baton.app/baton.db`）；
+Tauri 壳的服务进程策略（`src-tauri/src/main.rs`）：启动时先探测 127.0.0.1:7700 是否已有
+Baton 在听（std TcpStream 发 GET /api/v1/board，零依赖）——**有则复用（不内嵌启动）**，
+没有才在 setup 里 spawn 线程内嵌 core。数据库路径与所有入口统一为
+`baton_core::default_db_path()`（`~/.baton/baton.db`，旧 `data/baton.db` 首次启动时
+连 WAL 三件套一起复制迁移）——Tauri / WebUI / CLI / MCP 共享同一数据世界。
 前端经 `API_BASE`（dev 走 Vite 代理为空串；WebUI 模式同源为空串；仅 Tauri webview
-直连 `http://127.0.0.1:7700`，见 `web/src/api.ts`）访问内嵌 core；CSP `connect-src`
+直连 `http://127.0.0.1:7700`，见 `web/src/api.ts`）访问 core；CSP `connect-src`
 仅放行该地址。
 
 ### 构建检查
@@ -131,7 +135,7 @@ web/dist 在 workflow 里显式构建（`npm ci && npm run build`，绕过 befor
 
 | 变量 | 作用 | 默认值 |
 |---|---|---|
-| `BATON_DB` | 数据库路径（core server / CLI / MCP 共用） | `data/baton.db` |
+| `BATON_DB` | 数据库路径（core server / CLI / MCP / Tauri 共用） | `~/.baton/baton.db` |
 | `BATON_ADDR` | HTTP 监听地址（仅 `baton-core` bin） | `127.0.0.1:7700` |
 | `BATON_WEB_DIR` | WebUI 静态目录（WebUI 模式） | 自动探测 `web/dist` |
 | `BATON_AGENT_SELF_REGISTER` | 是否允许 Agent 自注册（`0`/`false` 关闭） | 开（本机信任模型） |

@@ -16,7 +16,7 @@
 //! 注册示例（Claude Code）：
 //!   claude mcp add baton -- /path/to/baton-mcp
 //! 环境变量：
-//!   BATON_DB        数据库路径（默认 data/baton.db）
+//!   BATON_DB        数据库路径（默认 ~/.baton/baton.db）
 //!   BATON_AGENT_ID  本进程扮演的 Agent 成员 id（默认 a-code）
 
 use baton_core::{ApiErr, Db};
@@ -263,7 +263,7 @@ fn call_tool(db: &Db, agent: &str, session: Option<&str>, name: &str, args: &Val
 }
 
 fn main() {
-    let db_path = std::env::var("BATON_DB").unwrap_or_else(|_| "data/baton.db".into());
+    let db_path = baton_core::default_db_path();
     let agent = std::env::var("BATON_AGENT_ID").unwrap_or_else(|_| "a-code".into());
     let db = Db::open(&db_path).expect("failed to open database");
 
