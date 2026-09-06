@@ -1,0 +1,63 @@
+# Release 流水线：发布 GitHub Release 时构建 Tauri 桌面应用并上传安装包
+#
+# 触发：在 GitHub 上发布 Release（tag 建议 v* 语义化版本）。
+# 产物：macOS 的 .dmg / .app.tar.gz（aarch64 + x86_64 两个目标），自动附加到该 Release。
+#
+# 注意：未做 Apple 签名/公证——用户首次打开需"右键 → 打开"绕过 Gatekeeper。
+
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-tauri:
+    name: 打包 macOS (${{ matrix.target }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 前端依赖与构建（显式做，绕过 beforeBuildCommand 在 CI 下的工作目录问题）
+      - name: 安装前端依赖
+        run: npm ci
+        working-directory: web
+
+      - name: 构建前端（产出 web/dist）
+        run: npm run build
+        working-directory: web
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Cargo 缓存（两个 target 各自缓存）
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            src-tauri
+
+      - name: 构建并上传 Tauri 安装包
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: src-tauri
+          releaseId: ${{ github.event.release.id }}
+          # web/dist 已在上面构建；跳过 beforeBuildCommand
+          args: --target ${{ matrix.target }} --config '{"build":{"beforeBuildCommand":"true"}}'

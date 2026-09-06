@@ -39,7 +39,8 @@ claude mcp add baton -- <本仓库>/core/target/debug/baton-mcp
 ```
 
 其他形态：开发模式（core + Vite 热更新，见 AGENTS.md）；桌面应用（`cd src-tauri && cargo run`，
-内嵌 core，数据库在系统应用数据目录）。
+内嵌 core，数据库在系统应用数据目录）。发布 Release 时 CI 自动打包 macOS 安装包
+（.dmg，aarch64 + x86_64，未签名——首次打开需右键 → 打开）。
 
 ## 界面速览
 

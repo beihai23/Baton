@@ -118,6 +118,14 @@ cd web && npm run build           # tsc --noEmit + vite build（含类型检查�
 cd src-tauri && cargo build       # 首次编译 Tauri 全量依赖较久
 ```
 
+### CI / Release
+
+`.github/workflows/release.yml`：发布 GitHub Release 时触发，macOS 双 target
+（aarch64 + x86_64）构建 Tauri 应用并把 .dmg/.app.tar.gz 附加到该 Release。
+web/dist 在 workflow 里显式构建（`npm ci && npm run build`，绕过 beforeBuildCommand
+的工作目录坑），tauri-action 以 `--config '{"build":{"beforeBuildCommand":"true"}}'` 跳过。
+**未签名/未公证**：用户首次打开需右键 → 打开。
+
 ### 环境变量
 
 | 变量 | 作用 | 默认值 |
