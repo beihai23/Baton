@@ -74,6 +74,17 @@ SQLite 库文件（WAL 模式）。三者语义一致（乐观锁/租约/列策�
 
 ## 3. 构建与运行
 
+### 一键启动（完整产品体验）
+
+```bash
+./start.sh   # 构建 WebUI（有更新时）+ 编译 core 全部二进制 + 启动 server
+# 打开 http://127.0.0.1:7700
+```
+
+常驻进程只有 `baton-core`（HTTP API + 内嵌 serve WebUI）；`baton-mcp` 是 stdio
+进程，由 Agent 客户端按需 spawn，无需随 server 启动（脚本编译它只为保证
+`core/target/debug/baton-mcp` 存在，便于 `claude mcp add` 注册）。
+
 ### 开发模式（前端 + core 分离）
 
 ```bash

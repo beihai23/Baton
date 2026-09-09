@@ -3,6 +3,8 @@ name = "baton-core"
 version = "0.1.0"
 edition = "2021"
 description = "Baton Core Server — local-first agent-native kanban core"
+# 多 bin crate：cargo run 默认启动 HTTP server（baton-mcp / baton 需 --bin 指定）
+default-run = "baton-core"
 
 [lib]
 name = "baton_core"
