@@ -84,6 +84,9 @@ SQLite 库文件（WAL 模式）。三者语义一致（乐观锁/租约/列策�
 常驻进程只有 `baton-core`（HTTP API + 内嵌 serve WebUI）；`baton-mcp` 是 stdio
 进程，由 Agent 客户端按需 spawn，无需随 server 启动（脚本编译它只为保证
 `core/target/debug/baton-mcp` 存在，便于 `claude mcp add` 注册）。
+编译缓存（`core/target` 等，约几百 MB）刻意保留以换秒级重启；
+`./start.sh clean` 可清理（core/target、web/node_modules、web/dist），
+下次启动需重新装依赖并全量编译。
 
 ### 开发模式（前端 + core 分离）
 
