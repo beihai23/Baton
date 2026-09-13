@@ -502,6 +502,21 @@ input:hover, select:hover, textarea:hover { border-color: var(--border-strong); 
   font-family: var(--font-mono); cursor: default;
 }
 .comment .kind { font-size: 11px; color: var(--muted); font-family: var(--font-mono); }
+
+/* 极简 Markdown 渲染（评论/描述）：零依赖子集，样式贴合设计系统 */
+.md code {
+  font-family: var(--font-mono); font-size: 12px;
+  background: var(--surface-3); border: 1px solid var(--border);
+  border-radius: 3px; padding: 0 4px;
+}
+.md a { color: var(--human-strong); }
+.md-pre {
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 10px; margin: 6px 0;
+  white-space: pre-wrap; word-break: break-all;
+}
+.md-ul { margin: 4px 0; padding-left: 20px; }
 .comment.kind-system {
   background: none; border-color: transparent; color: var(--muted);
   font-size: 12px; padding: 4px 2px; font-style: italic;

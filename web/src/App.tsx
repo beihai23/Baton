@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   api, API_BASE, AgentInfo, AgentSession, AppNotification, Approval, BoardState, CardDetail,
   CardSummary, Comment, ListWithCards, LIST_NAMES, Member, MEMBER_NAMES, Project,
@@ -9,6 +10,55 @@ import {
 let MEMBER_CACHE: Record<string, Member> = {};
 const memberName = (id?: string | null) => (id ? MEMBER_CACHE[id]?.name ?? MEMBER_NAMES[id] ?? id : "—");
 const memberKind = (id?: string | null) => (id ? MEMBER_CACHE[id]?.kind : undefined);
+
+// ---------------------------------------------------------------- Markdown
+// 极简 Markdown 子集渲染：```代码块```、**粗体**、`行内代码`、[链接](url)/裸 URL、
+// - 列表、段落换行。手拼 React 节点而非 dangerouslySetInnerHTML——零依赖且天然
+// XSS 安全（评论来自 Agent，内容不可信）。不支持的语法原样显示纯文本。
+function renderInline(text: string, kp: string): ReactNode[] {
+  const re = /\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s)\]]+/g;
+  const out: ReactNode[] = [];
+  let last = 0, k = 0, m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0];
+    const key = `${kp}-${k++}`;
+    if (tok.startsWith("**")) out.push(<b key={key}>{tok.slice(2, -2)}</b>);
+    else if (tok.startsWith("`")) out.push(<code key={key}>{tok.slice(1, -1)}</code>);
+    else if (tok.startsWith("[")) {
+      const lm = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(tok)!;
+      out.push(<a key={key} href={lm[2]} target="_blank" rel="noreferrer">{lm[1]}</a>);
+    } else out.push(<a key={key} href={tok} target="_blank" rel="noreferrer">{tok}</a>);
+    last = m.index + tok.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function renderMarkdown(md: string): ReactNode {
+  const blocks: ReactNode[] = [];
+  md.split(/```/).forEach((part, bi) => {
+    if (bi % 2 === 1) {   // 奇数段 = 代码块（首行若是语言标记则剥掉）
+      blocks.push(<pre key={`c${bi}`} className="md-pre">{part.replace(/^[a-zA-Z]*\n/, "")}</pre>);
+      return;
+    }
+    let list: string[] = [];
+    const flush = (k: string) => {
+      if (list.length) {
+        blocks.push(<ul key={k} className="md-ul">{list.map((li, i) => <li key={i}>{renderInline(li, `${k}-${i}`)}</li>)}</ul>);
+        list = [];
+      }
+    };
+    part.split("\n").forEach((ln, li) => {
+      const t = ln.trimStart();
+      if (t.startsWith("- ")) { list.push(t.slice(2)); return; }
+      flush(`b${bi}-u${li}`);
+      blocks.push(<div key={`b${bi}-l${li}`}>{renderInline(ln, `b${bi}-l${li}`)}{ln === "" ? " " : null}</div>);
+    });
+    flush(`b${bi}-uend`);
+  });
+  return blocks;
+}
 
 type Tab = "讨论" | "需求" | "Git" | "现场" | "移交" | "产物";
 
@@ -534,7 +584,7 @@ function CommentTree({ comments, onReply }: { comments: Comment[]; onReply: (c: 
         {c.kind === "chat" && (
           <button className="reply-btn" title="回复这条评论" onClick={() => onReply(c)}>回复</button>
         )}
-        <div>{c.body}</div>
+        <div className="md">{renderMarkdown(c.body)}</div>
       </div>
       {childrenOf(c.id).map((ch) => renderNode(ch, depth + 1))}
     </div>
@@ -659,7 +709,7 @@ function CardDrawer({
         </div>
       )}
       <DepsAdder card={card} board={board} run={run} />
-      {card.description && <p className="desc">{card.description}</p>}
+      {card.description && <div className="desc md">{renderMarkdown(card.description)}</div>}
 
       {/* 父子任务（F-107）：任务跑着跑着才拆得清——随时把一部分拆出去 */}
       <div className="children-section">

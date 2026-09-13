@@ -274,7 +274,9 @@ claim/release/takeover/assign/comments/progress/move/artifacts/deps/watch/unwatc
   无 Agent 在岗时的看板引导横幅，onboarding 与管理分离）、卡片抽屉六 Tab（讨论/需求/Git/现场/移交/产物）+
   讨论区人机分色（Agent 作者名青色 + `Agent` 徽标，人类琥珀色；成员名经 `MEMBER_CACHE`
   动态解析，新注册 Agent 不再显示裸 id）+ Agent 面板 session 行以出勤代号为主标识 +
-  讨论区话题索引（chip 点击滚动定位）+ 新建话题 + 评论树（`reply_to` 嵌套渲染）+
+  讨论区话题索引（chip 点击滚动定位）+ 新建话题 + 评论树（`reply_to` 嵌套渲染，
+  正文经 `renderMarkdown` 极简 Markdown 子集渲染——零依赖手拼 React 节点，
+  不用 dangerouslySetInnerHTML，天然 XSS 安全）+
   依赖展示与管理（F-106，添加依赖为标题搜索选择器，无需记卡片 id）+ 指派下拉/可抢标识（F-105/303）+ 收回租约按钮（F-405，
   协调者动作；claim/进度上报等 Agent 自主行为不在 GUI 出现）+
   长轮询实时刷新（100ms 防抖合并密集事件；长轮询在首次数据加载完成后才启动，
