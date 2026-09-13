@@ -145,6 +145,19 @@ CREATE TABLE IF NOT EXISTS card_participants (
 CREATE INDEX IF NOT EXISTS idx_card_participants_member ON card_participants(member_id);
 
 -- ----------------------------------------------------------------------------
+-- 关注订阅：成员显式/自动关注的卡片。被关注卡的新评论/进度/移列进入该成员的
+-- 通知流（notifications 派生）与心跳信号（heartbeat signals）。
+-- 自动关注挂点：claim（主驾）、join（副驾）、被指派（assignee）。
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS card_watchers (
+    card_id       TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    member_id     TEXT NOT NULL REFERENCES members(id),
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (card_id, member_id)
+);
+CREATE INDEX IF NOT EXISTS idx_card_watchers_member ON card_watchers(member_id);
+
+-- ----------------------------------------------------------------------------
 -- Agent Session（会话实例）：任务分配的真实对象。
 -- members 表里的 Agent 是"编制"（持久身份 + Token + 能力）；Session 是某次具体出勤
 -- （某工具的一次对话 / 某进程），进板时声明 scope 与工作现场，离开或超时判死。

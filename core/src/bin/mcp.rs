@@ -19,6 +19,9 @@
 //!   BATON_DB        数据库路径（默认 ~/.baton/baton.db）
 //!   BATON_AGENT_ID  本进程扮演的 Agent 成员 id（默认 a-code）
 
+// 工具清单是单个巨大 json! 字面量，默认递归上限（128）不够用
+#![recursion_limit = "256"]
+
 use baton_core::{ApiErr, Db};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -111,7 +114,7 @@ fn tool_defs() -> Value {
         {"name": "handoff_cancel", "description": "取消移交",
          "inputSchema": {"type": "object", "required": ["card_id"], "properties": {
              "card_id": {"type": "string"}}}},
-        {"name": "agent_heartbeat", "description": "上报心跳：更新本 Agent 的在线状态（GUI Agent 面板可见）",
+        {"name": "agent_heartbeat", "description": "上报心跳：更新在线状态并续期租约。响应含 signals 字段时说明有未读动态（@提及/移交/依赖解除等），应调用 notification_list 查看并主动介入",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "artifact_upload", "description": "给卡片上传产物（diff/文档/日志等）：path（本机文件）或 content（文本）二选一",
          "inputSchema": {"type": "object", "required": ["card_id","name"], "properties": {
@@ -168,6 +171,12 @@ fn tool_defs() -> Value {
              "card_id": {"type": "string"},
              "session_id": {"type": "string", "description": "缺省 = 当前进程会话"}}}},
         {"name": "card_leave", "description": "退出协同",
+         "inputSchema": {"type": "object", "required": ["card_id"], "properties": {
+             "card_id": {"type": "string"}}}},
+        {"name": "card_watch", "description": "关注卡片：该卡的新评论/进度/移列将进入你的通知流（notification_list）与心跳信号。claim/join/被指派会自动关注，想盯一张不由自己负责的卡时才需手动调用",
+         "inputSchema": {"type": "object", "required": ["card_id"], "properties": {
+             "card_id": {"type": "string"}}}},
+        {"name": "card_unwatch", "description": "取消关注卡片",
          "inputSchema": {"type": "object", "required": ["card_id"], "properties": {
              "card_id": {"type": "string"}}}}
     ])
@@ -259,6 +268,8 @@ fn call_tool(db: &Db, agent: &str, session: Option<&str>, name: &str, args: &Val
         "card_join" => db.join_card(s("card_id"), agent,
             args.get("session_id").and_then(Value::as_str).or(session)),
         "card_leave" => db.leave_card(s("card_id"), agent),
+        "card_watch" => db.watch_card(s("card_id"), agent),
+        "card_unwatch" => db.unwatch_card(s("card_id"), agent),
         _ => Err(ApiErr::bad_request("unknown tool")),
     }
 }
@@ -316,7 +327,7 @@ fn main() {
                     "protocolVersion": LEGACY_VERSION,
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "baton", "version": "0.2.0"},
-                    "instructions": "Baton 看板已自动为你创建会话（见 _meta.baton）。调用工具即在工作；建议先读 briefing（在手卡片/待接手移交/@提及）。定期调用 agent_heartbeat 续租约。",
+                    "instructions": "Baton 看板已自动为你创建会话（见 _meta.baton）。调用工具即在工作；建议先读 briefing（在手卡片/待接手移交/@提及）。定期调用 agent_heartbeat 续租约——响应带 signals 时有未读动态，调用 notification_list 查看并主动介入。",
                 });
                 if let Some(sid) = &auto_session {
                     let briefing = db.session_briefing(&agent).unwrap_or(json!({}));

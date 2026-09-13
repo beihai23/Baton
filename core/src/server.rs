@@ -18,6 +18,7 @@
 //!   POST /api/v1/cards                       {title, description?, actor?}
 //!   POST /api/v1/cards/{id}/claim|release    认领 / 释放租约
 //!   POST /api/v1/cards/{id}/join|leave       参与 / 退出协同（多 Agent 同卡协作）
+//!   POST /api/v1/cards/{id}/watch|unwatch    关注 / 取消关注（被关注卡动态进通知流）
 //!   POST /api/v1/cards/{id}/comments         {author, body, kind?, reply_to?, thread_id?}
 //!   POST /api/v1/cards/{id}/threads          {actor, title} 新建话题
 //!   POST /api/v1/cards/{id}/progress         {actor, percent, summary}
@@ -325,6 +326,15 @@ fn handle(db: &Arc<Mutex<Db>>, limiter: &Arc<Mutex<RateLimiter>>, web_dir: &Opti
 
         (&Method::Post, ["api", "v1", "cards", id, "leave"]) => {
             db.leave_card(id, s(&body, "actor", "a-code")).map_err(api_err)
+        }
+
+        // 关注订阅：被关注卡的评论/进度/移列进入成员通知流与心跳信号
+        (&Method::Post, ["api", "v1", "cards", id, "watch"]) => {
+            db.watch_card(id, s(&body, "actor", "a-code")).map_err(api_err)
+        }
+
+        (&Method::Post, ["api", "v1", "cards", id, "unwatch"]) => {
+            db.unwatch_card(id, s(&body, "actor", "a-code")).map_err(api_err)
         }
 
         (&Method::Post, ["api", "v1", "cards", id, "comments"]) => {

@@ -56,18 +56,21 @@ screenshots/     # 浏览器验证截图
   `2026-07-28` 无状态核心（`server/discover` 探针、per-request
   `_meta["io.modelcontextprotocol/protocolVersion"]` 校验、不支持回 -32022）。
   进程启动自动 `session_start`（进板），stdin 断开自动 `session_end`（离场）。
-  33 个工具（board_get/project_list/card_list/card_get/card_create/card_claim/
+  35 个工具（board_get/project_list/card_list/card_get/card_create/card_claim/
   card_release/card_move/card_comment/progress_update/thread_create/link_add/git_attach/git_refresh/
   worksite_add_node/handoff_prepare/handoff_ready/handoff_accept/handoff_cancel/
   agent_heartbeat/artifact_upload/artifact_list/card_dep_add/card_dep_remove/
   notification_list/card_assign/session_start/session_end/session_list/
-  approval_list/approval_decide/card_join/card_leave），
+  approval_list/approval_decide/card_join/card_leave/card_watch/card_unwatch），
   直接内嵌 `Db`，供 Claude Code 等 Agent 接入。
 - **bin `baton`**（`core/src/bin/cli.rs`）：CLI（`baton board / projects / project create /
-  card list|show|create|claim|release|move|comment|progress|takeover|upload|artifacts|dep|assign /
+  card list|show|create|claim|release|move|comment|progress|takeover|upload|artifacts|dep|assign|watch|unwatch /
   agents / agent add|token|revoke / heartbeat / sessions / session end / notifications /
   backup / export / import / approvals / approve|reject / doctor`），
   同样直接内嵌 `Db`，输出 pretty JSON。
+  另有 **`baton watch --cmd 'claude -p'`** 守护模式（L3 主动化）：轮询事件流，
+  与本 Agent 相关的动态攒批后经 stdin 唤起外部 Agent 进程（游标持久化在
+  `<库目录>/watch-<agent>.cursor` 不重复触发；`--cooldown` 默认 120s 内只攒不唤）。
 
 **关键架构事实**：HTTP server / CLI / MCP 三个进程各自内嵌 `Db`，可并发共享同一个
 SQLite 库文件（WAL 模式）。三者语义一致（乐观锁/租约/列策略规则相同，409 冲突语义一致）。
@@ -169,7 +172,7 @@ tiny_http，每请求一个线程（长轮询挂起不阻塞其他请求），`A
 路由清单见该文件头部注释，包括：`/api/v1/board?board_id=`、`/api/v1/projects`（多项目/
 看板/模板）、`/api/v1/events?since=`（长轮询，挂起最多 25s；tiny_http 的 respond 在
 body EOF 后才 flush，不支持 SSE 无限流，长轮询为等效替代）、`/api/v1/cards/{id}`、卡片
-claim/release/takeover/assign/comments/progress/move/artifacts/deps、审批 `approvals`、
+claim/release/takeover/assign/comments/progress/move/artifacts/deps/watch/unwatch、审批 `approvals`、
 `links`、`git attach/refresh`、`worksite/nodes`、`handoff/{prepare|ready|accept|cancel}`、
 `/api/v1/agents`（注册/Token 轮换/吊销/心跳）、`/api/v1/sessions`（进板/心跳续租/离场/
 资源视图）、`/api/v1/members`、`/api/v1/notifications`（通知中心，从 events 派生）。
@@ -225,7 +228,12 @@ claim/release/takeover/assign/comments/progress/move/artifacts/deps、审批 `ap
 - **抢单原子性（F-303）**：`claim_card` 是单条原子 SQL
   （`INSERT ... ON CONFLICT(card_id) DO UPDATE ... WHERE 旧租约已过期`：无行插入、
   过期行替换、活跃行不命中返回 409），不要改回"先查后插"（多进程并发会双占）。
-- **通知中心（F-404）**：不建表，从 `events` 派生（审批请求/@提及/依赖解除/接管/移交）；
+- **通知中心（F-404）**：不建表，从 `events` 派生（@提及/依赖解除/接管/移交/吊销）；
+  审批请求**不进**通知中心——审批中心自带待办红点与已处理历史，通知只放
+  "需要知道"的动态，与"需要裁决"的审批队列不重复；
+  **关注订阅（`card_watchers` 表）**：claim/join/被指派自动关注，显式
+  `watch|unwatch`（HTTP/MCP/CLI 三端）；被关注卡的新评论/进度/移列以
+  `关注卡*` 类型进通知流（@提及优先于关注匹配）；
   @提及在 `add_comment` 时按成员名/id 解析写入 `mentions_json`；已读游标在客户端
   （localStorage `baton.last_read_seq`）。
 - **速率限制（F-308）**：仅 HTTP 层对 Agent 写请求生效（`RateLimiter` 进程内滑动窗口，
@@ -242,6 +250,9 @@ claim/release/takeover/assign/comments/progress/move/artifacts/deps、审批 `ap
   （含已结束）上唯一、消亡不复用——历史里同名 session 一定是同一个。
   **编制名唯一**：`create_agent` 对重名注册返回 409（`members.name` 无 DB 约束，
   应用层兜底）。
+  **心跳信号注入（L1 主动化）**：`heartbeat`/`session_heartbeat` 响应附带
+  `signals`（上次心跳以来的未读动态计数）+ `hint`（引导 Agent 调
+  `notification_list` 并主动介入）；首次心跳无基线不附。
 - **产物存储（F-108）**：文件本体在 `<工作区目录>/artifacts/<card_id>/<id>-<name>`
   （工作区目录 = 库文件所在目录），元数据进 `artifacts` 表（含 sha256）。
 - **导出格式（F-503）**：`baton-export/v1` —— project.json 全量表 dump（不含易变的
@@ -253,9 +264,12 @@ claim/release/takeover/assign/comments/progress/move/artifacts/deps、审批 `ap
 - `App.tsx`：单文件应用，左侧扁平看板导航（一行一看板：看板名 + 项目名，悬浮出现
   项目行内重命名/两段式删除；新建项目为低频动作，默认收起到虚线入口）、
   模板选择（F-101/112）、
-  四列看板 + 卡片拖拽（列策略预告：拒绝/进审批）、审批中心（待办 + 最近已处理）、通知中心（F-404 未读角标）、Agent 管理面板（F-211
-  注册/轮换/吊销/会话）+ 在场汇总芯片（F-213，点击开面板）、
-  接入指引独立面板（`InstallPanel`：一键复制 Claude Code 命令/通用 MCP 配置/给 Agent 的自包含安装指令，
+  四列看板 + 卡片拖拽（列策略预告：拒绝/进审批）、审批中心（待办 + 最近已处理）、通知中心（F-404 未读角标）、
+  Agent 在场汇总芯片（F-213，顶栏唯一 Agent 入口：N 在岗 · M 在编，点击开管理面板 F-211
+  注册/轮换/吊销/会话）、
+  接入指引独立面板（`InstallPanel`：一键复制 Claude Code 命令/通用 MCP 配置/给 Agent 的自包含安装指令
+  （含"主动工作"约定：心跳 signals → notification_list → 介入）/「定时自省」模板
+  （客户端定时提示词 或 `baton watch` 守护进程二选一），
   路径由 `GET /api/v1/install-info` 探测；入口在侧栏底部「⇄ 接入 Agent」+
   无 Agent 在岗时的看板引导横幅，onboarding 与管理分离）、卡片抽屉六 Tab（讨论/需求/Git/现场/移交/产物）+
   讨论区人机分色（Agent 作者名青色 + `Agent` 徽标，人类琥珀色；成员名经 `MEMBER_CACHE`

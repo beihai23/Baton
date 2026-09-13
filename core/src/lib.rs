@@ -374,15 +374,49 @@ impl Db {
         Ok(json!({"ok": true, "id": agent_id}))
     }
 
-    /// 心跳（F-213）：Agent 自报在线，写 agent_json.last_heartbeat
+    /// 心跳（F-213）：Agent 自报在线，写 agent_json.last_heartbeat。
+    /// 信号注入：响应附带"上次心跳以来的未读动态计数"，非零时提示 Agent
+    /// 调用 notification_list 查看并介入——让活着的 Agent 主动感知变化。
     pub fn heartbeat(&self, agent_id: &str) -> Result<Value, ApiErr> {
         self.require_agent(agent_id)?;
+        let prev_hb: Option<String> = self.conn.query_row(
+            "SELECT json_extract(agent_json,'$.last_heartbeat') FROM members WHERE id=?1",
+            params![agent_id], |r| r.get(0),
+        ).unwrap_or(None);
         self.conn.execute(
             "UPDATE members SET agent_json=json_set(COALESCE(agent_json,'{}'),'$.last_heartbeat',
                 strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1",
             params![agent_id],
         )?;
-        Ok(json!({"ok": true, "agent_id": agent_id}))
+        let mut out = json!({"ok": true, "agent_id": agent_id});
+        if let Some(prev) = prev_hb {
+            let sig = self.signals_since(agent_id, &prev)?;
+            if sig.get("total").and_then(Value::as_i64).unwrap_or(0) > 0 {
+                let obj = out.as_object_mut().unwrap();
+                obj.insert("signals".into(), sig);
+                obj.insert("hint".into(), json!(
+                    "有未读动态：调用 notification_list 查看，并按需介入（回复 @提及 / 接手移交 / 推进刚解除依赖的卡）"));
+            }
+        }
+        Ok(out)
+    }
+
+    /// 某时刻以来与本成员相关的动态计数（按 kind 分组）：复用通知派生逻辑按时间过滤
+    fn signals_since(&self, member_id: &str, since_iso: &str) -> SqlResult<Value> {
+        let all = self.notifications(member_id, 0, 50)?;
+        let mut counts: std::collections::HashMap<String, i64> = Default::default();
+        let mut total = 0i64;
+        for n in all.as_array().cloned().unwrap_or_default() {
+            let at = n.get("at").and_then(Value::as_str).unwrap_or("");
+            if at > since_iso {
+                let k = n.get("kind").and_then(Value::as_str).unwrap_or("动态").to_string();
+                *counts.entry(k).or_insert(0) += 1;
+                total += 1;
+            }
+        }
+        let mut out = serde_json::json!(counts);
+        out.as_object_mut().unwrap().insert("total".into(), json!(total));
+        Ok(out)
     }
 
     /// Agent 面板（F-213）：在线状态（2 分钟内心跳）、当前持有卡片、最近心跳
@@ -603,8 +637,15 @@ impl Db {
             "UPDATE claims SET lease_until=datetime('now','+30 minutes') WHERE session_id=?1",
             params![session_id],
         )?;
-        self.heartbeat(&agent_id)?;
-        Ok(json!({"ok": true, "session_id": session_id, "leases_renewed": renewed}))
+        let hb = self.heartbeat(&agent_id)?;
+        let mut out = json!({"ok": true, "session_id": session_id, "leases_renewed": renewed});
+        // 透传心跳的未读信号（signals/hint），MCP 的 agent_heartbeat 走本路径
+        if let (Some(sig), Some(hint)) = (hb.get("signals"), hb.get("hint")) {
+            let obj = out.as_object_mut().unwrap();
+            obj.insert("signals".into(), sig.clone());
+            obj.insert("hint".into(), hint.clone());
+        }
+        Ok(out)
     }
 
     /// 离场：显式结束 Session（租约不强制回收，进入自然到期倒计时，可被接管）
@@ -1041,6 +1082,7 @@ impl Db {
             params![card_id, member, session_id],
         )?;
         self.sys_comment(card_id, member, &format!("🤝 {} 加入协同", member))?;
+        self.add_watcher(card_id, member)?;   // 副驾自动关注
         self.log_event(member, "card", card_id, "join", json!({}));
         Ok(self.card_detail(card_id)?)
     }
@@ -1058,6 +1100,37 @@ impl Db {
         self.sys_comment(card_id, member, &format!("👋 {} 退出协同", member))?;
         self.log_event(member, "card", card_id, "leave", json!({}));
         Ok(self.card_detail(card_id)?)
+    }
+
+    // ------------------------------------------------------------------ watch
+    // 关注订阅：被关注卡的新评论/进度/移列进入成员的通知流（notifications 派生）
+    // 与心跳信号（heartbeat signals）。claim（主驾）/ join（副驾）/ 被指派时
+    // 自动关注；也可显式 watch/unwatch。
+
+    /// 内部挂点：自动关注（幂等，不校验卡片存在性——调用方已校验）
+    fn add_watcher(&self, card_id: &str, member: &str) -> SqlResult<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO card_watchers(card_id,member_id) VALUES(?1,?2)",
+            params![card_id, member],
+        )?;
+        Ok(())
+    }
+
+    /// 显式关注卡片（幂等）
+    pub fn watch_card(&self, card_id: &str, member: &str) -> Result<Value, ApiErr> {
+        self.conn.query_row("SELECT 1 FROM cards WHERE id=?1", params![card_id], |r| r.get::<_, i64>(0))
+            .map_err(|_| ApiErr::bad_request(&format!("card not found: {}", card_id)))?;
+        self.add_watcher(card_id, member)?;
+        Ok(json!({"ok": true, "card_id": card_id, "watcher": member}))
+    }
+
+    /// 取消关注（幂等）
+    pub fn unwatch_card(&self, card_id: &str, member: &str) -> Result<Value, ApiErr> {
+        self.conn.execute(
+            "DELETE FROM card_watchers WHERE card_id=?1 AND member_id=?2",
+            params![card_id, member],
+        )?;
+        Ok(json!({"ok": true, "card_id": card_id, "watcher": member}))
     }
 
     fn threads_with_comments(&self, card_id: &str) -> SqlResult<Value> {
@@ -1131,6 +1204,7 @@ impl Db {
         self.sys_comment(card_id, holder, &format!("{} 认领了此卡片（租约 30 分钟{}）",
             holder,
             session_id.map(|s| format!("，session {}", s)).unwrap_or_default()))?;
+        self.add_watcher(card_id, holder)?;   // 主驾自动关注：卡的动态进其通知流
         self.log_event(holder, "card", card_id, "claim",
             json!({"holder": holder, "session_id": session_id}));
         Ok(json!({"ok": true, "claim": self.active_claim(card_id)?}))
@@ -1147,6 +1221,9 @@ impl Db {
             Some(a) => format!("👤 指派给 {}", a),
             None => "👤 放入抢单池（任何空闲 Agent 可认领）".to_string(),
         })?;
+        if let Some(a) = assignee {
+            self.add_watcher(card_id, a)?;   // 被指派者自动关注
+        }
         self.log_event(actor, "card", card_id, "assign", json!({"assignee": assignee}));
         Ok(self.card_detail(card_id)?)
     }
@@ -1273,8 +1350,10 @@ impl Db {
     }
 
     // ------------------------------------------------------------------ notifications
-    // F-404：通知中心 —— 从事件日志派生（审批请求、@提及、依赖解除、接管、移交就绪/被接）。
+    // F-404：通知中心 —— 从事件日志派生（@提及、依赖解除、接管、移交就绪/被接、吊销）。
     // 不另建表：events 即事实源；已读状态由客户端记录 last_read_seq。
+    // 职责分工：审批请求不进通知中心——审批中心自带待办红点与已处理历史，
+    // 通知中心只放"需要知道"的动态，审批是"需要裁决"的队列，两者不重复。
 
     pub fn notifications(&self, member_id: &str, since_seq: i64, limit: i64) -> SqlResult<Value> {
         let mut stmt = self.conn.prepare(
@@ -1290,12 +1369,17 @@ impl Db {
             ))
         })?.collect::<SqlResult<Vec<_>>>()?;
         let mut out = Vec::new();
+        // 关注订阅：本成员关注的卡片集合（被关注卡的评论/进度/移列进通知流）
+        let mut wstmt = self.conn.prepare(
+            "SELECT card_id FROM card_watchers WHERE member_id=?1")?;
+        let watched: std::collections::HashSet<String> = wstmt
+            .query_map(params![member_id], |r| r.get::<_, String>(0))?
+            .collect::<SqlResult<_>>()?;
         for (seq, at, actor, entity, entity_id, action, payload) in rows {
             let payload: Value = serde_json::from_str(&payload).unwrap_or(json!({}));
             // 本人自己产生的事件不通知自己
             if actor.as_deref() == Some(member_id) { continue; }
             let kind = match (entity.as_str(), action.as_str()) {
-                ("approval", "request") => Some("审批请求"),
                 ("comment", "create") => {
                     let mentioned = payload.get("mentions").and_then(Value::as_array)
                         .map(|m| m.iter().any(|x| x.as_str() == Some(member_id)))
@@ -1309,6 +1393,19 @@ impl Db {
                 ("member", "revoke") => Some("Agent 吊销"),
                 _ => None,
             };
+            // 关注卡动态兜底：未命中上面的专属类型时，若事件落在关注的卡上仍进通知流
+            let kind = kind.or_else(|| {
+                if watched.is_empty() { return None; }
+                let cid = payload.get("card_id").and_then(Value::as_str)
+                    .or(if entity == "card" { Some(entity_id.as_str()) } else { None })?;
+                if !watched.contains(cid) { return None; }
+                match (entity.as_str(), action.as_str()) {
+                    ("comment", "create") => Some("关注卡新评论"),
+                    ("card", "progress") => Some("关注卡进度"),
+                    ("card", "move") => Some("关注卡移列"),
+                    _ => None,
+                }
+            });
             if let Some(k) = kind {
                 out.push(json!({
                     "seq": seq, "at": at, "actor_id": actor, "kind": k,

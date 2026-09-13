@@ -28,6 +28,8 @@
 //!   baton sessions [--agent <id>]            Session 资源视图
 //!   baton session end <id>                   结束会话
 //!   baton notifications [--as u-owner] [--since N] [--limit N]   通知中心（F-404）
+//!   baton watch --cmd 'claude -p' [--as a-code] [--interval 3] [--cooldown 120]
+//!                                        守护模式：有相关动态时经 stdin 唤起外部 Agent
 //!   baton backup [--keep N]                  快照备份到 <工作区>/backups/（F-504，默认留 10 份）
 //!   baton export [--project <id>] --out <dir>   导出项目：project.json + cards/*.md + 附件（F-503）
 //!   baton import <dir>                       从导出目录导入（幂等，按原 id INSERT OR REPLACE）
@@ -115,6 +117,8 @@ fn main() {
             flag(&args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(50),
         ).map_err(|e| json!({"error": e.to_string()})),
 
+        "watch" => watch_cmd(&db, &args, &actor),
+
         "backup" => db.backup(
             flag(&args, "--keep").and_then(|s| s.parse().ok()).unwrap_or(10),
         ).map_err(|e| e.body),
@@ -151,6 +155,8 @@ fn card_cmd(db: &Db, args: &[String], actor: &str) -> Result<Value, Value> {
         Some("join") => db.join_card(need(args, 2, "<id>"), actor,
             flag(args, "--session").as_deref()).map_err(|e| e.body),
         Some("leave") => db.leave_card(need(args, 2, "<id>"), actor).map_err(|e| e.body),
+        Some("watch") => db.watch_card(need(args, 2, "<id>"), actor).map_err(|e| e.body),
+        Some("unwatch") => db.unwatch_card(need(args, 2, "<id>"), actor).map_err(|e| e.body),
         Some("move") => {
             let id = need(args, 2, "<id>");
             let to = flag(args, "--to").ok_or_else(|| json!({"error": "missing --to <list_id>"}))?;
@@ -224,6 +230,81 @@ fn need<'a>(args: &'a [String], i: usize, what: &str) -> &'a str {
 fn fail(v: Value) -> ! {
     eprintln!("{}", serde_json::to_string_pretty(&v).unwrap());
     exit(1)
+}
+
+// ------------------------------------------------------------------ watch（L3）
+
+/// watch 守护模式：轮询事件流，把与本 Agent 相关的动态攒批，经 stdin 唤起外部
+/// 命令（如 `claude -p`）——让 Agent 无人值守也能主动介入（接手/回复/继续推进）。
+/// 游标持久化在 <库目录>/watch-<agent>.cursor（重启不重复触发历史）；
+/// 冷却期（--cooldown，默认 120s）内只攒不唤，攒下的动态并入下一次唤起的 prompt。
+fn watch_cmd(db: &Db, args: &[String], actor: &str) -> Result<Value, Value> {
+    let cmd = flag(args, "--cmd")
+        .ok_or_else(|| json!({"error": "missing --cmd <唤起命令>，如 --cmd 'claude -p'（prompt 经 stdin 传入）"}))?;
+    let interval: u64 = flag(args, "--interval").and_then(|s| s.parse().ok()).unwrap_or(3);
+    let cooldown: u64 = flag(args, "--cooldown").and_then(|s| s.parse().ok()).unwrap_or(120);
+    let cursor_file = db.workspace_dir().join(format!("watch-{}.cursor", actor));
+    // 游标：持久化文件优先；首次启动从当前最大 seq 开始（不回放历史动态）
+    let mut cursor: i64 = std::fs::read_to_string(&cursor_file)
+        .ok().and_then(|s| s.trim().parse().ok())
+        .unwrap_or_else(|| db.events_since(0).1);
+    let mut pending: Vec<Value> = Vec::new();
+    // 启动即进入"可唤起"状态
+    let mut last_wake = std::time::Instant::now() - std::time::Duration::from_secs(cooldown);
+    eprintln!("baton watch 运行中：agent={} cmd={} interval={}s cooldown={}s cursor={}",
+        actor, cmd, interval, cooldown, cursor);
+    loop {
+        if let Ok(Value::Array(ns)) = db.notifications(actor, cursor, 50) {
+            for n in ns {
+                if let Some(s) = n.get("seq").and_then(Value::as_i64) {
+                    if s > cursor { cursor = s; }
+                }
+                pending.push(n);
+            }
+        }
+        let _ = std::fs::write(&cursor_file, cursor.to_string());
+        if !pending.is_empty()
+            && last_wake.elapsed() >= std::time::Duration::from_secs(cooldown)
+        {
+            let prompt = render_wake_prompt(actor, &pending);
+            let n = pending.len();
+            pending.clear();
+            let r = std::process::Command::new("sh").arg("-c").arg(&cmd)
+                .stdin(std::process::Stdio::piped())
+                .env("BATON_AGENT_ID", actor)
+                .env("BATON_DB", baton_core::default_db_path())
+                .spawn()
+                .and_then(|mut child| {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = stdin.write_all(prompt.as_bytes());
+                    }   // stdin 离开作用域即关闭（EOF）
+                    child.wait()
+                });
+            match r {
+                Ok(status) => eprintln!("baton watch: 已唤起（{} 条动态），退出码 {:?}", n, status.code()),
+                Err(e) => eprintln!("baton watch: 唤起失败: {}", e),
+            }
+            last_wake = std::time::Instant::now();
+        }
+        std::thread::sleep(std::time::Duration::from_secs(interval));
+    }
+}
+
+/// 唤起 prompt：动态清单 + 行动指引（Agent 凭此自取上下文并介入）
+fn render_wake_prompt(agent: &str, ns: &[Value]) -> String {
+    let mut lines = vec![format!("Baton 看板有 {} 条与你（{}）相关的动态：", ns.len(), agent)];
+    for n in ns {
+        lines.push(format!("- [{}] 卡片 {}（{} 于 {}）",
+            n.get("kind").and_then(Value::as_str).unwrap_or("动态"),
+            n.get("card_id").and_then(Value::as_str).unwrap_or("—"),
+            n.get("actor_id").and_then(Value::as_str).unwrap_or("系统"),
+            n.get("at").and_then(Value::as_str).unwrap_or(""),
+        ));
+    }
+    lines.push(String::new());
+    lines.push("请通过 Baton 的 MCP 工具或 CLI 处理：先 card_get 了解上下文，再按需介入（回复评论 / 认领可抢的卡 / 接手移交 / 继续推进刚解除依赖的卡）。处理后保持心跳（agent_heartbeat）。".into());
+    lines.join("\n")
 }
 
 // ------------------------------------------------------------------ export / import (F-503)

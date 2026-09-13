@@ -143,6 +143,14 @@ export interface CardParticipant {
   left_at?: ISODateTime;           // NULL = 协同中
 }
 
+// 关注订阅：被关注卡的新评论/进度/移列进入成员的通知流与心跳信号。
+// 自动关注挂点：claim（主驾）、join（副驾）、被指派；也可显式 watch/unwatch
+export interface CardWatcher {
+  card_id: Id;
+  member_id: Id;
+  created_at: ISODateTime;
+}
+
 export type DepRelation = 'blocks' | 'blocked_by' | 'relates_to';
 
 export interface Card {

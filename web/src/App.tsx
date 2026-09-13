@@ -206,15 +206,12 @@ export default function App() {
         </span>
         <div className="spacer" />
         {/* 右：次级面板开关 → 环境状态 → 主行动线（建卡）。
-            Agent 在场状态压成一个可点汇总芯片，点击打开 Agent 面板，不再平铺占栏 */}
+            Agent 在场汇总芯片是唯一入口：信息（N 在岗 · M 在编）与动作（开管理面板）合一 */}
         <button className="btn" onClick={() => setShowApprovals(!showApprovals)}>
           🔔 审批{pendingCount > 0 && <span className="pill">{pendingCount}</span>}
         </button>
         <button className="btn" onClick={toggleNotifs}>
           📨 通知{unreadCount > 0 && <span className="pill">{unreadCount}</span>}
-        </button>
-        <button className="btn" onClick={() => setShowAgents(!showAgents)}>
-          🤖 Agent
         </button>
         <button
           className={`presence-chip ${onlineCount > 0 ? "online" : ""}`}
@@ -956,7 +953,7 @@ function InstallPanel({ onClose }: { onClose: () => void }) {
         </div>
         <div className="tab-hint">
           三种方式任选：Claude Code 一键命令；通用 MCP 配置；或把整段指引直接贴给你的 Agent，让它自己完成安装。
-          接入后 Agent 即可进板认领任务。
+          接入后 Agent 即可进板认领任务；另附「定时自省」模板，让 Agent 主动感知看板变化。
         </div>
         {installInfo && (
           <>
@@ -974,7 +971,23 @@ function InstallPanel({ onClose }: { onClose: () => void }) {
 3. 验证：调用 board_get 确认连通。进程启动会自动 session_start（进板），退出自动 session_end。
 4. 工作方式：card_claim 认领卡片 → 干活 → progress_update 汇报进展 → card_move 移列。
    注意：移动需携带当前 rev（乐观锁）；进入"进行中"列前必须先 progress_update 上报进度摘要。
-5. 如果你是全新 Agent：POST http://127.0.0.1:7700/api/v1/agents 可自注册并领取 Token（本机默认放开）。`} />
+5. 如果你是全新 Agent：POST http://127.0.0.1:7700/api/v1/agents 可自注册并领取 Token（本机默认放开）。
+6. 主动工作：定期 agent_heartbeat 续租约；响应带 signals 时说明有未读动态——
+   调用 notification_list 查看并主动介入（回复 @提及 / handoff_accept 接手移交 /
+   推进刚解除依赖的卡）。你 claim/join/被指派的卡会自动关注，其新评论与进度变化
+   都会进入你的通知流；想盯其他卡可用 card_watch。`} />
+            <CopyBlock label="定时自省（可选：让 Agent 无人值守主动干活）"
+              text={`方式一（Agent 客户端的定时任务）：给你的 Agent 配一个每 15 分钟的定时提示词——
+
+执行 Baton 看板自省（通过 baton MCP 工具）：
+1. agent_heartbeat —— 响应含 signals 说明有未读动态
+2. notification_list 查看明细
+3. 按需介入：回复 @提及 / handoff_accept 接手移交 / 推进刚解除依赖的卡 / 继续在手卡片
+4. 无需介入时不做任何写操作，保持安静
+
+方式二（本机守护进程，事件触发而非定时）：
+nohup ${installInfo.mcp_bin.replace(/baton-mcp$/, "baton")} watch --cmd 'claude -p' &
+—— 与你 Agent 相关的看板动态会攒批唤起一个新的 Agent 进程去处理（冷却 120s）。`} />
           </>
         )}
       </section>
