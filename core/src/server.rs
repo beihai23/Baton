@@ -143,13 +143,24 @@ fn handle(db: &Arc<Mutex<Db>>, limiter: &Arc<Mutex<RateLimiter>>, web_dir: &Opti
     // 长轮询事件流：有新事件立即返回；否则挂起最多 25s。
     // tiny_http 的 respond 在 body EOF 后才 flush，无法做真正的 SSE 无限流，
     // 长轮询达到同等实时效果且更简单可靠。
+    // 事件源双通道：同进程写经 EventBus 即时唤醒；跨进程写（CLI/MCP 进程内嵌 Db
+    // 直写同一 SQLite 库，EventBus 感知不到）靠每 1s 回查 events 表兜底，
+    // 因此 Agent 通过 MCP/CLI 建卡/移卡，WebUI 也能在约 1s 内实时刷新。
     if method == Method::Get && seg.as_slice() == ["api", "v1", "events"] {
         let since: i64 = query.split('&')
             .find_map(|kv| kv.strip_prefix("since="))
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        let bus = db.lock().unwrap().bus();
-        let (events, last_seq) = bus.poll(since, std::time::Duration::from_secs(25));
+        let rx = db.lock().unwrap().bus().subscribe();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+        let (events, last_seq) = loop {
+            let found = db.lock().unwrap().events_since(since);
+            if !found.0.is_empty() || std::time::Instant::now() >= deadline {
+                break found;
+            }
+            // 同进程事件立即唤醒重查；跨进程事件最迟下一个 1s tick 捕获
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(1));
+        };
         let data = json!({"events": events, "last_seq": last_seq}).to_string().into_bytes();
         return req.respond(
             Response::from_data(data)

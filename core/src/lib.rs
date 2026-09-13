@@ -80,15 +80,16 @@ fn board_template(template: &str) -> Vec<(&'static str, &'static str)> {
 
 // ------------------------------------------------------------------ EventBus
 
-/// 进程内事件广播：每次写事件日志同时推送给 SSE 订阅者。
+/// 进程内事件广播：写事件日志时唤醒本进程的长轮询等待者（即时性优化）。
+/// 只覆盖同进程写入；跨进程事件（CLI/MCP 进程直写同一 SQLite 库）由长轮询
+/// 每秒回查 events 表兜底，见 Db::events_since 与 server 的 /events 处理。
 pub struct EventBus {
     subs: Mutex<Vec<mpsc::Sender<String>>>,
-    history: Mutex<std::collections::VecDeque<(i64, String)>>,
 }
 
 impl EventBus {
     pub fn new() -> Self {
-        EventBus { subs: Mutex::new(Vec::new()), history: Mutex::new(Default::default()) }
+        EventBus { subs: Mutex::new(Vec::new()) }
     }
     pub fn subscribe(&self) -> mpsc::Receiver<String> {
         let (tx, rx) = mpsc::channel();
@@ -96,34 +97,8 @@ impl EventBus {
         rx
     }
     pub fn publish(&self, msg: &str) {
-        // msg 为 JSON，含 seq；入历史（容量 500）并唤醒长轮询订阅者
-        let seq = serde_json::from_str::<Value>(msg).ok()
-            .and_then(|v| v.get("seq").and_then(Value::as_i64))
-            .unwrap_or(0);
-        {
-            let mut h = self.history.lock().unwrap();
-            h.push_back((seq, msg.to_string()));
-            while h.len() > 500 { h.pop_front(); }
-        }
         let mut subs = self.subs.lock().unwrap();
         subs.retain(|tx| tx.send(msg.to_string()).is_ok());
-    }
-    /// 长轮询：取 seq 大于 since 的事件；无则最多等待 timeout，有新事件即返回
-    pub fn poll(&self, since: i64, timeout: std::time::Duration) -> (Vec<String>, i64) {
-        let snapshot = |h: &std::collections::VecDeque<(i64, String)>| -> (Vec<String>, i64) {
-            let evs: Vec<String> = h.iter().filter(|(s, _)| *s > since).map(|(_, m)| m.clone()).collect();
-            let last = h.back().map(|(s, _)| *s).unwrap_or(since);
-            (evs, last)
-        };
-        {
-            let h = self.history.lock().unwrap();
-            let (evs, last) = snapshot(&h);
-            if !evs.is_empty() { return (evs, last); }
-        }
-        let rx = self.subscribe();
-        let _ = rx.recv_timeout(timeout);   // 唤醒或超时皆可
-        let h = self.history.lock().unwrap();
-        snapshot(&h)
     }
 }
 
@@ -176,6 +151,38 @@ impl Db {
         self.bus.clone()
     }
 
+    /// 查询 seq 大于 since 的事件日志，返回与 log_event 广播相同形状的 JSON 列表
+    /// 及当前最大 seq。EventBus 只能感知本进程写入；events 表在 WAL 模式下跨进程
+    /// 可见，长轮询借此捕获 CLI/MCP 进程产生的变更（见 server 的 /events 处理）。
+    pub fn events_since(&self, since: i64) -> (Vec<String>, i64) {
+        let mut stmt = match self.conn.prepare(
+            "SELECT seq, at, actor_id, entity, entity_id, action FROM events WHERE seq > ?1 ORDER BY seq LIMIT 500",
+        ) {
+            Ok(s) => s,
+            Err(_) => return (vec![], since),
+        };
+        let mut last = since;
+        let rows = stmt.query_map(params![since], |r| {
+            let seq: i64 = r.get(0)?;
+            if seq > last {
+                last = seq;
+            }
+            Ok(json!({
+                "seq": seq,
+                "at": r.get::<_, String>(1)?,
+                "actor_id": r.get::<_, Option<String>>(2)?,
+                "entity": r.get::<_, String>(3)?,
+                "entity_id": r.get::<_, String>(4)?,
+                "action": r.get::<_, String>(5)?,
+            })
+            .to_string())
+        });
+        match rows {
+            Ok(rows) => (rows.flatten().collect(), last),
+            Err(_) => (vec![], since),
+        }
+    }
+
     /// 工作区目录（库文件所在目录）：产物文件存于 `<dir>/artifacts/<card_id>/`
     pub fn workspace_dir(&self) -> std::path::PathBuf {
         std::path::Path::new(&self.db_path)
@@ -215,7 +222,7 @@ impl Db {
         Ok(())
     }
 
-    /// 写事件日志（append-only）并广播给 SSE 订阅者
+    /// 写事件日志（append-only）并广播唤醒本进程的长轮询等待者
     fn log_event(&self, actor: &str, entity: &str, entity_id: &str, action: &str, payload: Value) {
         let ok = self.conn.execute(
             "INSERT INTO events(actor_id,entity,entity_id,action,payload_json) VALUES(?1,?2,?3,?4,?5)",

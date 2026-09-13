@@ -205,7 +205,9 @@ claim/release/takeover/assign/comments/progress/move/artifacts/deps、审批 `ap
   - 审批裁决规则（`decide_approval`）：申请者一律不能自审（403）；
     `human` 模式的审批单仅人类可裁决，`peer` 模式任何其他成员均可。
 - **事件日志**：所有状态变更通过 `Db::log_event` 写 `events` 表（append-only，
-  `seq` 自增）并广播到 `EventBus`（进程内历史容量 500），驱动长轮询实时刷新。
+  `seq` 自增）并广播到 `EventBus`（仅唤醒本进程长轮询），驱动长轮询实时刷新。
+  长轮询 `/api/v1/events` 双通道取事件：同进程写经 EventBus 即时唤醒，跨进程写
+  （CLI/MCP 直写库）由 `Db::events_since` 每秒回查 `events` 表兜底（≤1s 延迟）。
 - **移交状态机**：`none → preparing → ready →(accept)→ none`，任意非 none 状态可
   cancel 回 `none`；非法迁移返回 409。`ready` 时移交方自动释放租约，`accept` 时
   接手方自动 claim。
@@ -361,8 +363,9 @@ claim/release/takeover/assign/comments/progress/move/artifacts/deps、审批 `ap
   + Vite 开发。注意没有 Cargo workspace，`cargo run -p baton-core` 在仓库根目录不可用。
 - **CLI 默认 actor 是 `a-code`（Agent）**：用它移动 `l-review` 会触发审批而不是直接
   移动，属预期行为；`baton approve/reject` 则硬编码以人类 Owner `u-owner` 身份执行。
-- **`EventBus` 是进程内的**：CLI/MCP 进程写库产生的事件不会推送到 HTTP server 进程的
-  长轮询客户端（各自有独立的 bus）；跨进程感知依赖下次轮询/刷新。
+- **`EventBus` 是进程内的**：它只负责即时唤醒本进程的长轮询等待者；跨进程事件
+  （CLI/MCP 写库）由 `/api/v1/events` 每秒回查 `events` 表捕获（WAL 共享），
+  WebUI 约 1s 内可见，无需手工刷新。
 - **`tauri build` 的 `beforeBuildCommand`**（`npm --prefix ../web run build`）在
   `npm exec --package=@tauri-apps/cli` 下工作目录解析有坑（会找到仓库外）；先手动
   `cd web && npm run build`，再用
