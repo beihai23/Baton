@@ -185,6 +185,7 @@ export interface CardDetail {
 export interface AgentSession {
   id: string;
   agent_id: string;
+  nickname: string | null;
   project_id: string | null;
   board_id: string | null;
   cwd: string | null;

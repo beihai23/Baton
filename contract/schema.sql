@@ -152,6 +152,8 @@ CREATE INDEX IF NOT EXISTS idx_card_participants_member ON card_participants(mem
 CREATE TABLE IF NOT EXISTS sessions (
     id            TEXT PRIMARY KEY,
     agent_id      TEXT NOT NULL REFERENCES members(id),
+    nickname      TEXT,                            -- 出勤代号：词池分配或 Agent 自取名，
+                                                   -- 全局唯一（含已结束会话，消亡不复用），冲突派生 名·N
     project_id    TEXT REFERENCES projects(id),    -- 声明的 scope（可空 = 全部）
     board_id      TEXT REFERENCES boards(id),
     cwd           TEXT,                            -- 进程工作目录

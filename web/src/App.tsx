@@ -4,7 +4,11 @@ import {
   CardSummary, Comment, ListWithCards, LIST_NAMES, Member, MEMBER_NAMES, Project,
 } from "./api";
 
-const memberName = (id?: string | null) => (id ? MEMBER_NAMES[id] ?? id : "—");
+// 成员动态表：refresh 拉到 members 后填充。memberName/memberKind 据此解析——
+// 新注册的 Agent 也能显示真名，而不是裸 id（MEMBER_NAMES 仅为种子数据兜底）
+let MEMBER_CACHE: Record<string, Member> = {};
+const memberName = (id?: string | null) => (id ? MEMBER_CACHE[id]?.name ?? MEMBER_NAMES[id] ?? id : "—");
+const memberKind = (id?: string | null) => (id ? MEMBER_CACHE[id]?.kind : undefined);
 
 type Tab = "讨论" | "需求" | "Git" | "现场" | "移交" | "产物";
 
@@ -57,6 +61,7 @@ export default function App() {
       setBoard(b);
       setProjects(p);
       setAgents(a);
+      MEMBER_CACHE = Object.fromEntries(m.map((x) => [x.id, x]));
       setMembers(m);
       setSessions(ss);
       setApprovals(await api.approvals()); // 全量：pending 待办 + 最近已处理（审批闭环呈现）
@@ -520,10 +525,14 @@ function CardChip({ card, onOpen, onDragCardStart, onDragCardEnd }: {
 function CommentTree({ comments, onReply }: { comments: Comment[]; onReply: (c: Comment) => void }) {
   const childrenOf = (id: string) => comments.filter((c) => c.reply_to === id);
   const isTop = (c: Comment) => !c.reply_to || !comments.some((p) => p.id === c.reply_to);
-  const renderNode = (c: Comment, depth: number): JSX.Element => (
+  const renderNode = (c: Comment, depth: number): JSX.Element => {
+    const who = memberKind(c.author_id);
+    return (
     <div key={c.id}>
       <div className={`comment kind-${c.kind}${depth > 0 ? " nested" : ""}`}>
-        <span className="author">{memberName(c.author_id)}</span>
+        {/* 人机分色：Agent 作者青色 + 徽标，人类琥珀色（DESIGN.md 人机分色纪律） */}
+        <span className={`author${who ? ` ${who}` : ""}`}>{memberName(c.author_id)}</span>
+        {who === "agent" && <span className="who-badge">Agent</span>}
         <span className="kind">{c.kind}</span>
         {c.kind === "chat" && (
           <button className="reply-btn" title="回复这条评论" onClick={() => onReply(c)}>回复</button>
@@ -533,6 +542,7 @@ function CommentTree({ comments, onReply }: { comments: Comment[]; onReply: (c: 
       {childrenOf(c.id).map((ch) => renderNode(ch, depth + 1))}
     </div>
   );
+  };
   return <>{comments.filter(isTop).map((c) => renderNode(c, 0))}</>;
 }
 
@@ -1032,7 +1042,9 @@ function AgentPanel({
             {agentSessions.map((s) => (
               <div key={s.id} className="session-row">
                 <span>{s.status === "active" ? "🟢" : s.status === "stale" ? "🟡" : "⚫"}</span>
-                <span className="mono">{s.id.slice(0, 14)}</span>
+                {/* 出勤代号为主标识（全局唯一，消亡不复用）；裸 id 降为辅助信息 */}
+                {s.nickname && <span className="session-nick">{s.nickname}</span>}
+                <span className="mono muted">{s.id.slice(0, 14)}</span>
                 {s.branch && <span className="tag">{s.branch}</span>}
                 {s.repo_path && <span className="muted mono">{s.repo_path.split("/").pop()}</span>}
                 {s.holding_cards.length > 0 && <span className="muted">🔒 {s.holding_cards.length}</span>}

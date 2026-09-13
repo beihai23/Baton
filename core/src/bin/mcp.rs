@@ -143,10 +143,11 @@ fn tool_defs() -> Value {
          "inputSchema": {"type": "object", "required": ["card_id"], "properties": {
              "card_id": {"type": "string"},
              "assignee": {"type": "string", "description": "成员 id；缺省 = 抢单池"}}}},
-        {"name": "session_start", "description": "显式进板：声明本会话的 scope/工作现场，返回进板简报（在手卡片/待接手移交/@提及）。stdio 进程会自动进板，通常无需调用",
+        {"name": "session_start", "description": "显式进板：声明本会话的 scope/工作现场，返回进板简报（在手卡片/待接手移交/@提及）。stdio 进程会自动进板，通常无需调用。可用 nickname 为本会话自取一个出勤代号（建议 2-4 字、好记；重名会自动派生为 名·N，保证全局唯一）；不取则从词池自动分配",
          "inputSchema": {"type": "object", "properties": {
              "project_id": {"type": "string"}, "board_id": {"type": "string"},
              "cwd": {"type": "string"}, "repo_path": {"type": "string"}, "branch": {"type": "string"},
+             "nickname": {"type": "string", "description": "自取出勤代号（可选）；重名自动派生 名·N"},
              "parent_session_id": {"type": "string", "description": "resume 链：上一个会话 id"}}}},
         {"name": "session_end", "description": "显式离场：结束指定（或当前）会话；持有租约进入自然到期",
          "inputSchema": {"type": "object", "properties": {

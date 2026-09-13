@@ -15,6 +15,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const SCHEMA: &str = include_str!("../../contract/schema.sql");
 
+/// Session 出勤代号词池（山海经神兽，好记、无歧义）：session_start 未自取名时
+/// 按序分配首个未用名，全部用过后以 名·N 派生，保证全局唯一。
+const SESSION_NICKNAMES: &[&str] = &[
+    "青隼", "赤狐", "墨麟", "白泽", "金雕", "玄武", "朱雀", "应龙",
+    "当康", "夫诸", "鸾鸟", "重明", "毕方", "英招", "陆吾", "开明",
+    "天狗", "九凤", "烛阴", "嘲风", "蒲牢", "狻猊", "霸下", "睚眦",
+    "椒图", "螭吻", "囚牛", "狴犴", "负屃", "蚣蝮", "望天", "旋龟",
+];
+
 /// 生成简洁唯一 id：时间戳(hex) + 自增(hex)，骨架阶段替代 ULID。
 fn new_id(prefix: &str) -> String {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -143,6 +152,9 @@ impl Db {
         };
         if !has_col("claims", "session_id")? {
             self.conn.execute("ALTER TABLE claims ADD COLUMN session_id TEXT", [])?;
+        }
+        if !has_col("sessions", "nickname")? {
+            self.conn.execute("ALTER TABLE sessions ADD COLUMN nickname TEXT", [])?;
         }
         Ok(())
     }
@@ -310,6 +322,15 @@ impl Db {
             }
             // 自注册：actor 即新 Agent 自报的身份（本机信任模型）
         }
+        // 编制名强制唯一：重名即 409（members.name 无 DB 唯一约束，这里应用层兜底；
+        // 本地单机模型接受 check-then-insert 的理论竞态）
+        let name = name.trim();
+        let dup = self.conn.query_row(
+            "SELECT 1 FROM members WHERE name=?1", params![name], |_| Ok(()),
+        );
+        if dup.is_ok() {
+            return Err(ApiErr::conflict(json!({"error": format!("member name already exists: {}", name)})));
+        }
         let id = new_id("a");
         let token = gen_token();
         let agent_json = json!({
@@ -456,6 +477,38 @@ impl Db {
     // Agent Session（PRD 资源管理视角）：任务分配的真实对象。
     // 进板（session_start）声明 scope + 工作现场（cwd/git 自动探测），返回进板简报；
     // 心跳续命并自动续租约；离场（session_end）或心跳超时（180s → 展示为 stale）。
+    // 出勤代号 nickname：Agent 可在进板时自取名（冲突自动派生 名·N），缺省从词池
+    // 按序分配；全局唯一且消亡不复用——历史里出现的同名 session 一定是同一个。
+
+    /// 分配出勤代号：自取名优先，缺省取词池首个未用名；冲突派生 名·2/·3…
+    /// 唯一性在全量 sessions（含已结束）上判定，由调用方同事务写入。
+    fn alloc_nickname(&self, want: Option<&str>) -> SqlResult<String> {
+        let taken = |n: &str| -> SqlResult<bool> {
+            match self.conn.query_row(
+                "SELECT 1 FROM sessions WHERE nickname=?1", params![n], |_| Ok(()),
+            ) {
+                Ok(_) => Ok(true),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+                Err(e) => Err(e),
+            }
+        };
+        let base = match want {
+            Some(w) if !w.trim().is_empty() => w.trim().to_string(),
+            _ => SESSION_NICKNAMES.iter().find(|n| !taken(n).unwrap_or(false))
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| SESSION_NICKNAMES[0].to_string()),
+        };
+        if !taken(&base)? {
+            return Ok(base);
+        }
+        for i in 2.. {
+            let cand = format!("{}·{}", base, i);
+            if !taken(&cand)? {
+                return Ok(cand);
+            }
+        }
+        unreachable!()
+    }
 
     /// 进板：创建 Session 并返回简报（在手卡片 / 待接手移交 / 未读 @提及）
     pub fn session_start(&self, agent_id: &str, args: &Value) -> Result<Value, ApiErr> {
@@ -469,6 +522,7 @@ impl Db {
         }
         let id = new_id("s");
         let s = |k: &str| args.get(k).and_then(Value::as_str);
+        let nickname = self.alloc_nickname(s("nickname"))?;
         let cwd = s("cwd").map(String::from)
             .or_else(|| std::env::current_dir().ok().map(|p| p.display().to_string()));
         // 工作现场自动探测：cwd 所在 git 仓库的根与分支（失败不阻塞进板）
@@ -480,10 +534,10 @@ impl Db {
             },
         };
         self.conn.execute(
-            "INSERT INTO sessions(id,agent_id,project_id,board_id,cwd,repo_path,branch,parent_session_id,meta_json,last_heartbeat)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            "INSERT INTO sessions(id,agent_id,nickname,project_id,board_id,cwd,repo_path,branch,parent_session_id,meta_json,last_heartbeat)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
             params![
-                id, agent_id, s("project_id"), s("board_id"),
+                id, agent_id, nickname, s("project_id"), s("board_id"),
                 cwd, repo_path, branch,
                 s("parent_session_id"),
                 args.get("meta").cloned().unwrap_or(json!({})).to_string(),
@@ -492,9 +546,9 @@ impl Db {
         // 心跳同步到 profile 在线状态
         self.heartbeat(agent_id)?;
         self.log_event(agent_id, "session", &id, "start",
-            json!({"cwd": cwd, "repo_path": repo_path, "branch": branch}));
+            json!({"nickname": nickname, "cwd": cwd, "repo_path": repo_path, "branch": branch}));
         let mut out = json!({
-            "session_id": id, "agent_id": agent_id,
+            "session_id": id, "agent_id": agent_id, "nickname": nickname,
             "cwd": cwd, "repo_path": repo_path, "branch": branch,
         });
         out.as_object_mut().unwrap().insert("briefing".into(), self.session_briefing(agent_id)?);
@@ -582,7 +636,7 @@ impl Db {
     pub fn list_sessions(&self, agent_id: Option<&str>) -> SqlResult<Value> {
         let sql = "SELECT s.id, s.agent_id, s.project_id, s.board_id, s.cwd, s.repo_path,
                     s.branch, s.status, s.parent_session_id, s.started_at, s.last_heartbeat,
-                    s.ended_at, s.meta_json,
+                    s.ended_at, s.meta_json, s.nickname,
                     (SELECT json_group_array(c2.card_id) FROM claims c2
                      WHERE c2.session_id=s.id AND c2.lease_until > datetime('now')) AS holding
              FROM sessions s
@@ -593,7 +647,7 @@ impl Db {
             let status: String = r.get(7)?;
             let last_hb: Option<String> = r.get(10)?;
             let meta: String = r.get(12)?;
-            let holding: Option<String> = r.get(13)?;
+            let holding: Option<String> = r.get(14)?;
             Ok(json!({
                 "id": r.get::<_, String>(0)?,
                 "agent_id": r.get::<_, String>(1)?,
@@ -608,6 +662,7 @@ impl Db {
                 "last_heartbeat": last_hb,
                 "ended_at": r.get::<_, Option<String>>(11)?,
                 "meta": serde_json::from_str::<Value>(&meta).unwrap_or(json!({})),
+                "nickname": r.get::<_, Option<String>>(13)?,
                 "holding_cards": holding
                     .and_then(|h| serde_json::from_str::<Value>(&h).ok())
                     .unwrap_or(json!([])),

@@ -60,6 +60,7 @@ export type SessionStatus = 'active' | 'ended';
 export interface AgentSession {
   id: Id;
   agent_id: Id;                  // → Agent Profile
+  nickname?: string;             // 出勤代号：词池分配或自取名，全局唯一（消亡不复用）
   project_id?: Id;               // 声明的 scope
   board_id?: Id;
   cwd?: string;                  // 进程工作目录

@@ -237,6 +237,11 @@ claim/release/takeover/assign/comments/progress/move/artifacts/deps、审批 `ap
   不落库）；claim 记录 session_id，时间线署名到会话。与 MCP 协议层的"会话"无关：
   2026-07-28 无状态核心下，session_id 是业务层显式标识，由调用方逐请求携带
   （MCP stdio 下由进程级自动 session 代劳）。
+  **出勤代号 `sessions.nickname`**：进板时可自取名（`nickname` 参数，冲突自动派生
+  `名·N`），缺省从词池（`SESSION_NICKNAMES`，山海经神兽）按序分配；全量 sessions
+  （含已结束）上唯一、消亡不复用——历史里同名 session 一定是同一个。
+  **编制名唯一**：`create_agent` 对重名注册返回 409（`members.name` 无 DB 约束，
+  应用层兜底）。
 - **产物存储（F-108）**：文件本体在 `<工作区目录>/artifacts/<card_id>/<id>-<name>`
   （工作区目录 = 库文件所在目录），元数据进 `artifacts` 表（含 sha256）。
 - **导出格式（F-503）**：`baton-export/v1` —— project.json 全量表 dump（不含易变的
@@ -253,6 +258,8 @@ claim/release/takeover/assign/comments/progress/move/artifacts/deps、审批 `ap
   接入指引独立面板（`InstallPanel`：一键复制 Claude Code 命令/通用 MCP 配置/给 Agent 的自包含安装指令，
   路径由 `GET /api/v1/install-info` 探测；入口在侧栏底部「⇄ 接入 Agent」+
   无 Agent 在岗时的看板引导横幅，onboarding 与管理分离）、卡片抽屉六 Tab（讨论/需求/Git/现场/移交/产物）+
+  讨论区人机分色（Agent 作者名青色 + `Agent` 徽标，人类琥珀色；成员名经 `MEMBER_CACHE`
+  动态解析，新注册 Agent 不再显示裸 id）+ Agent 面板 session 行以出勤代号为主标识 +
   讨论区话题索引（chip 点击滚动定位）+ 新建话题 + 评论树（`reply_to` 嵌套渲染）+
   依赖展示与管理（F-106，添加依赖为标题搜索选择器，无需记卡片 id）+ 指派下拉/可抢标识（F-105/303）+ 收回租约按钮（F-405，
   协调者动作；claim/进度上报等 Agent 自主行为不在 GUI 出现）+
@@ -260,8 +267,8 @@ claim/release/takeover/assign/comments/progress/move/artifacts/deps、审批 `ap
   避免与首屏请求争抢浏览器同域连接）。UI 文案为中文。
 - `api.ts`：全部 TS 接口类型 + API 客户端，**与 `contract/types.ts` 对齐**；
   `API_BASE` 区分三种场景：dev 走 Vite 代理（空串）、WebUI 模式同源（空串）、
-  Tauri webview 直连 7700。`MEMBER_NAMES`/`LIST_NAMES`
-  硬编码演示数据。
+  Tauri webview 直连 7700。成员名解析走 `MEMBER_CACHE` 动态表（refresh 填充），
+  `MEMBER_NAMES`/`LIST_NAMES` 硬编码仅为种子数据兜底。
 - `styles.css`：设计系统（CSS 变量 tokens + `.btn` 按钮体系），视觉方向「调度室」，
   **色值/字体/组件纪律以 `DESIGN.md` 为准**。约定：**可交互元素
   必须有按钮/链接样式（`.btn`/`.btn-link`/focus ring），纯信息用 `.mini-badge`/
