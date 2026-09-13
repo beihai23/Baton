@@ -55,7 +55,8 @@ screenshots/     # 浏览器验证截图
   JSON-RPC 2.0），**双时代协议**：legacy `2024-11-05`（initialize 握手）与 modern
   `2026-07-28` 无状态核心（`server/discover` 探针、per-request
   `_meta["io.modelcontextprotocol/protocolVersion"]` 校验、不支持回 -32022）。
-  进程启动自动 `session_start`（进板），stdin 断开自动 `session_end`（离场）。
+  进程启动自动 `session_start`（进板），stdin 断开自动 `session_end`（离场），
+  后台线程每 60s 自动 `session_heartbeat`（进程活着 = 在岗，不依赖 LLM 主动调）。
   35 个工具（board_get/project_list/card_list/card_get/card_create/card_claim/
   card_release/card_move/card_comment/progress_update/thread_create/link_add/git_attach/git_refresh/
   worksite_add_node/handoff_prepare/handoff_ready/handoff_accept/handoff_cancel/
@@ -242,7 +243,8 @@ claim/release/takeover/assign/comments/progress/move/artifacts/deps/watch/unwatc
   （`sessions` 表）是出勤——任务分配与归属的真实对象。进板 `session_start` 声明
   scope/工作现场（cwd/git 自动探测）并返回简报（在手卡/待接手移交/@提及）；
   心跳续命并**自动续期本 session 持有的租约**；180s 无心跳展示为 stale（计算状态，
-  不落库）；claim 记录 session_id，时间线署名到会话。与 MCP 协议层的"会话"无关：
+  不落库）；claim 记录 session_id，时间线署名到会话。**MCP stdio 进程有后台线程
+  每 60s 自动心跳**（进程活着 = 在岗）；HTTP/CLI 接入的 Agent 需自行定期心跳。与 MCP 协议层的"会话"无关：
   2026-07-28 无状态核心下，session_id 是业务层显式标识，由调用方逐请求携带
   （MCP stdio 下由进程级自动 session 代劳）。
   **出勤代号 `sessions.nickname`**：进板时可自取名（`nickname` 参数，冲突自动派生

@@ -288,6 +288,21 @@ fn main() {
     eprintln!("baton-mcp ready (db: {}, agent: {}, session: {})",
         db_path, agent, auto_session.as_deref().unwrap_or("none"));
 
+    // 后台心跳线程：进程活着 = 在岗。每 60s 自动 session_heartbeat（续命 + 续租约，
+    // 在线阈值 120s / stale 阈值 180s，60s 留有富余），不再依赖 LLM 主动调
+    // agent_heartbeat（之前只有进板时心跳一次，120s 后永远显示"无 Agent 在岗"）。
+    // 独立 Db 连接（WAL 多连接共享同一库），单次失败吞掉、下个周期重试。
+    if let Some(sid) = &auto_session {
+        let sid = sid.clone();
+        let path = db_path.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            if let Ok(db2) = Db::open(&path) {
+                let _ = db2.session_heartbeat(&sid);
+            }
+        });
+    }
+
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     for line in stdin.lock().lines() {
